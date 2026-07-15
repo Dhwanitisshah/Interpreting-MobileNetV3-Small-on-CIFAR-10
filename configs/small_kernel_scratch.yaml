@@ -1,0 +1,21 @@
+experiment: small_kernel_scratch
+seed: 42
+
+model:
+  variant: small_kernel
+  pretrained: false
+  num_classes: 10
+
+data:
+  root: ./data
+  train_batch_size: 128
+  test_batch_size: 32
+  num_workers: 4
+
+train:
+  epochs: 10
+  optimizer: sgd
+  lr: 0.01
+  momentum: 0.9
+  weight_decay: 0.0005
+  scheduler: cosine
