@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Callable, Optional, Tuple
 
 import torch
 from torch.utils.data import DataLoader
@@ -75,6 +75,7 @@ def build_loaders(
     test_batch_size: int = 32,
     num_workers: int = 4,
     download: bool = True,
+    worker_init_fn: Optional[Callable] = None,
 ) -> Tuple[DataLoader, DataLoader]:
     train_set = CIFAR10(
         root=root, train=True, download=download, transform=build_train_transform()
@@ -89,6 +90,7 @@ def build_loaders(
         shuffle=True,
         num_workers=num_workers,
         pin_memory=True,
+        worker_init_fn=worker_init_fn,
     )
     test_loader = DataLoader(
         test_set,
@@ -96,5 +98,6 @@ def build_loaders(
         shuffle=False,
         num_workers=num_workers,
         pin_memory=True,
+        worker_init_fn=worker_init_fn,
     )
     return train_loader, test_loader
