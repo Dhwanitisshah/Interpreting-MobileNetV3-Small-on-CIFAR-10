@@ -258,9 +258,15 @@ def print_dissociation_interpretation(out, metrics: dict, corruptions: list, sev
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.parse_args()
+    parser.add_argument(
+        "--robustness-dir", default=str(ROBUSTNESS_DIR),
+        help="Directory holding robustness_metrics.json (default: runs/robustness). "
+             "Point at runs/robustness_fixed to report on the Phase 7.3 fixed-target-class rerun.",
+    )
+    args = parser.parse_args()
+    robustness_dir = Path(args.robustness_dir)
 
-    metrics = load(ROBUSTNESS_DIR / "robustness_metrics.json")
+    metrics = load(robustness_dir / "robustness_metrics.json")
     corruptions, severities = parse_agg_keys(metrics[list(metrics.keys())[0]]["aggregate"])
 
     buf = io.StringIO()
@@ -279,11 +285,11 @@ def main() -> None:
     text = buf.getvalue()
     print(text, end="")
 
-    out_path = ROBUSTNESS_DIR / "report.txt"
+    out_path = robustness_dir / "report.txt"
     out_path.write_text(text, encoding="utf-8")
     print(f"Saved report to {out_path.resolve()}")
 
-    breakdown_path = ROBUSTNESS_DIR / "per_corruption_breakdown.json"
+    breakdown_path = robustness_dir / "per_corruption_breakdown.json"
     with open(breakdown_path, "w") as f:
         json.dump({"corruptions": corruptions, "severities": severities, "uniformity": uniformity}, f, indent=2)
     print(f"Saved per-corruption breakdown data to {breakdown_path.resolve()}")

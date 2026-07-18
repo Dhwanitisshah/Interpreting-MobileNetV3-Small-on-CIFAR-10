@@ -119,7 +119,8 @@ def main() -> bool:
 
     required_keys = {
         "index", "true_label", "corruption", "severity", "clean_pred", "clean_confidence",
-        "clean_correct", "corrupt_pred", "corrupt_confidence", "corrupt_correct", "flipped",
+        "clean_correct", "corrupt_pred", "corrupt_confidence", "corrupt_correct",
+        "conf_corrupt_of_clean_class", "explained_class", "flipped",
         "spearman", "ssim", "top_k_iou", "centroid_shift",
     }
     results.append(("every record has the expected keys", all(required_keys.issubset(r.keys()) for r in records)))
@@ -131,6 +132,32 @@ def main() -> bool:
              and r["centroid_shift"] >= 0.0
              for r in records
          )),
+    )
+    results.append(
+        ("1 - spearman drift is in [0, 2] for every record",
+         all(0.0 - 1e-6 <= 1.0 - r["spearman"] <= 2.0 + 1e-6 for r in records)),
+    )
+    results.append(
+        ("1 - top_k_iou drift is in [0, 1] for every record",
+         all(0.0 - 1e-6 <= 1.0 - r["top_k_iou"] <= 1.0 + 1e-6 for r in records)),
+    )
+
+    # 4b: fixed-target-class CAM -- the explained class must be clean_pred for
+    # every record, even where the corrupted prediction differs from it (i.e.
+    # the corrupted-pass CAM must NOT switch to explaining its own prediction).
+    results.append(
+        ("explained_class equals clean_pred for every record",
+         all(r["explained_class"] == r["clean_pred"] for r in records)),
+    )
+    flipped_records = [r for r in records if r["flipped"]]
+    results.append(
+        ("at least one record has a flipped prediction (so the fixed-target-class check is non-vacuous)",
+         len(flipped_records) > 0),
+    )
+    results.append(
+        ("on flipped-prediction records, explained_class == clean_pred != corrupt_pred "
+         "(drift is measured against the clean class, not the corrupted model's own prediction)",
+         all(r["explained_class"] == r["clean_pred"] and r["explained_class"] != r["corrupt_pred"] for r in flipped_records)),
     )
 
     expected_n_groups = len(corruptions) * len(severities)

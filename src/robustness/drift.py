@@ -5,6 +5,14 @@ clean input against the Grad-CAM computed on a corrupted version of the same
 input. `evaluate_robustness` drives this over a dataset, a shared set of
 indices, and a grid of (corruption, severity) settings, recording per-image
 drift plus whether the corruption flipped the model's prediction.
+
+IMPORTANT (Phase 7.3 fix): drift is measured for a FIXED target class -- the
+class the model predicted on the CLEAN image -- so that the clean and
+corrupted CAMs are directly comparable (both explain "where is the evidence
+for class C"). Explaining the corrupted model's own (possibly different)
+prediction instead would conflate the explanation actually moving with the
+model simply answering a different question, and inflates drift exactly for
+the images/models whose predictions change most under corruption.
 """
 
 import math
@@ -47,7 +55,11 @@ def _centroid(cam: np.ndarray) -> np.ndarray:
 
 def explanation_drift(cam_clean: np.ndarray, cam_corrupt: np.ndarray) -> Dict[str, float]:
     """Compare two same-shape CAMs. Perfect agreement (identical CAMs) gives
-    spearman=1.0, ssim~1.0, top_k_iou=1.0, centroid_shift=0.0."""
+    spearman=1.0, ssim~1.0, top_k_iou=1.0, centroid_shift=0.0.
+
+    Both CAMs must explain the SAME target class (see `_cam_for_class` below)
+    -- otherwise "drift" conflates the explanation moving with the model
+    simply answering a different question on the corrupted input."""
     cam_clean = np.asarray(cam_clean, dtype=np.float64)
     cam_corrupt = np.asarray(cam_corrupt, dtype=np.float64)
     if cam_clean.shape != cam_corrupt.shape:
@@ -65,6 +77,11 @@ def explanation_drift(cam_clean: np.ndarray, cam_corrupt: np.ndarray) -> Dict[st
     h, w = cam_clean.shape
     diag = math.sqrt(h * h + w * w)
     centroid_shift = float(np.linalg.norm(_centroid(cam_clean) - _centroid(cam_corrupt)) / diag)
+
+    if not (-1.0 - 1e-6 <= spearman <= 1.0 + 1e-6):
+        raise ValueError(f"spearman similarity out of [-1, 1] range: {spearman}")
+    if not (0.0 - 1e-6 <= top_k_iou <= 1.0 + 1e-6):
+        raise ValueError(f"top_k_iou out of [0, 1] range: {top_k_iou}")
 
     return {
         "spearman": spearman,
@@ -90,14 +107,33 @@ def _to_normalized_tensor(image_uint8_hwc: np.ndarray, device: torch.device) -> 
     return tensor.to(device)
 
 
-def _cam_pred_conf(model: torch.nn.Module, image: torch.Tensor, device: torch.device) -> Tuple[np.ndarray, int, float]:
+def _cam_for_class(
+    model: torch.nn.Module, image: torch.Tensor, device: torch.device, target_class: int = None
+) -> Tuple[np.ndarray, int, float, float]:
+    """Compute a Grad-CAM plus the model's OWN prediction/confidence on `image`.
+
+    If `target_class` is None, the CAM explains the model's own prediction
+    (the clean pass). If `target_class` is given, the CAM explains that FIXED
+    class regardless of what the model currently predicts on this image (the
+    corrupted pass) -- so drift measures how the explanation for the SAME
+    class moved, rather than conflating explanation movement with the model
+    answering a different question. `GradCAM.__call__` always returns the
+    model's actual argmax prediction (`preds`) independent of `target_class`,
+    which is what it is used for here.
+
+    Returns (cam, actual_pred, actual_pred_confidence, explained_class_confidence)
+    where explained_class_confidence is the probability of whichever class the
+    CAM explains (== actual_pred_confidence when target_class is None).
+    """
     with GradCAM(model) as gradcam:
-        cams, preds = gradcam(image.unsqueeze(0).to(device))
+        cams, preds = gradcam(image.unsqueeze(0).to(device), target_class=target_class)
     pred = int(preds[0])
+    explained_class = int(target_class) if target_class is not None else pred
     with torch.no_grad():
         probs = F.softmax(model(image.unsqueeze(0).to(device)), dim=1)[0]
     confidence = float(probs[pred])
-    return cams[0].numpy(), pred, confidence
+    explained_confidence = float(probs[explained_class])
+    return cams[0].numpy(), pred, confidence, explained_confidence
 
 
 def evaluate_robustness(
@@ -110,9 +146,14 @@ def evaluate_robustness(
     desc: str = "robustness",
 ) -> Tuple[List[Dict], Dict]:
     """For every image: compute the clean CAM/prediction once, then for every
-    (corruption, severity) corrupt the un-normalized image, recompute the CAM
-    and prediction, and record drift metrics plus whether the prediction
-    flipped. Returns (per_image_records, aggregates_by_corruption_severity)."""
+    (corruption, severity) corrupt the un-normalized image and recompute the
+    CAM -- but for the FIXED clean-predicted class, not whatever the model
+    predicts on the corrupted input. This keeps clean and corrupted CAMs
+    answering the same question ("where does the evidence for class C live?")
+    so that `explanation_drift` measures the explanation actually moving,
+    rather than conflating that with the model's prediction changing (which is
+    tracked separately via `corrupt_pred` / `flipped`). Returns
+    (per_image_records, aggregates_by_corruption_severity)."""
     model.eval()
     records: List[Dict] = []
 
@@ -124,7 +165,7 @@ def evaluate_robustness(
         image = image.to(device)
         label = int(label)
 
-        cam_clean, pred_clean, conf_clean = _cam_pred_conf(model, image, device)
+        cam_clean, pred_clean, conf_clean, _ = _cam_for_class(model, image, device, target_class=None)
         clean_correct = pred_clean == label
         image_uint8 = _to_uint8_hwc(image)
 
@@ -133,7 +174,9 @@ def evaluate_robustness(
                 corrupt_uint8 = apply_corruption(image_uint8, corruption, severity)
                 corrupt_tensor = _to_normalized_tensor(corrupt_uint8, device)
 
-                cam_corrupt, pred_corrupt, conf_corrupt = _cam_pred_conf(model, corrupt_tensor, device)
+                cam_corrupt, pred_corrupt, conf_corrupt, conf_corrupt_of_clean_class = _cam_for_class(
+                    model, corrupt_tensor, device, target_class=pred_clean
+                )
                 drift = explanation_drift(cam_clean, cam_corrupt)
                 corrupt_correct = pred_corrupt == label
                 flipped = pred_corrupt != pred_clean
@@ -150,6 +193,8 @@ def evaluate_robustness(
                         "corrupt_pred": pred_corrupt,
                         "corrupt_confidence": conf_corrupt,
                         "corrupt_correct": corrupt_correct,
+                        "conf_corrupt_of_clean_class": conf_corrupt_of_clean_class,
+                        "explained_class": pred_clean,
                         "flipped": flipped,
                         **drift,
                     }
