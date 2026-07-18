@@ -62,35 +62,59 @@ rather than to training procedure, dataset, or capacity differences.
   progressively randomized top-down, confirming the explanations are
   weight-dependent rather than degenerate edge maps.
 - Faithfulness (deletion/insertion AUC, ROAD gap), once confidence-normalized,
-  is statistically **equivalent** (TOST) between most model pairs — the SE
-  and kernel-size ablations mostly don't change *static* faithfulness, with
-  a small number of metric/pair exceptions detailed in
-  `runs/faithfulness/report.txt`.
-- Under distribution shift, explanation **drift scales with architecture,
-  not just with accuracy loss**: `vanilla_finetune` and `small_kernel_scratch`
-  show drift well beyond what their accuracy drop alone predicts
-  (drift/acc-drop ratio 1.4 and 1.3, vs. 0.6 for
-  `vanilla_scratch`/`no_se_scratch`), an effect that is not explained by
-  CAM-sharpness confounds and is concentrated in additive/sensor noise
-  (`gaussian_noise`) rather than brightness/contrast.
+  is a **formal TOST equivalence** (SESOI = 0.3 Cohen's d) between
+  `vanilla_scratch` and `no_se_scratch` on all three metrics — removing SE
+  blocks does not measurably change *static* faithfulness. Other pairs and a
+  small number of exceptions are detailed in `runs/faithfulness/report.txt`.
+- Under distribution shift, explanation drift scales with architecture beyond
+  what accuracy loss alone predicts, but the effect is **directional, not
+  uniform across corruptions** — see the results table and caveats below.
+- The SE result extends to drift stability: 3 of 4 drift metrics (Spearman,
+  SSIM, top-k IoU) are formally **equivalent** between `vanilla_scratch` and
+  `no_se_scratch` at the same SESOI; the fourth (centroid shift) is
+  **inconclusive** (p_TOST = 0.055, just above the 0.05 threshold) rather
+  than equivalent — likely underpowered, since its observed difference
+  (spearman: mean diff +0.0030) sits within the ~0.003 run-to-run
+  measurement-noise floor established below.
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full phase-by-phase development
-history.
+history, including the Phase 7.5 evaluation-reproducibility fix these numbers
+depend on.
 
 ### Headline results table
 
-| Model | Test accuracy | Norm. deletion AUC ↓ | Norm. insertion AUC ↑ | Norm. ROAD gap ↑ | Mean drift (1 − Spearman) | Drift / acc-drop ratio |
-|---|---|---|---|---|---|---|
-| `vanilla_scratch` | 80.55% | 0.288 | 0.833 | 0.454 | 0.164 | 0.61 |
-| `no_se_scratch` | 81.29% | 0.281 | 0.825 | 0.504 | 0.155 | 0.59 |
-| `small_kernel_scratch` | 76.34% | 0.269 | 0.878 | 0.540 | 0.311 | 1.26 |
-| `vanilla_finetune` | 95.59% | 0.268 | 0.781 | 0.551 | 0.400 | 1.42 |
+Accuracy-floor-filtered (`--min-accuracy 0.2`): drift/accuracy cells where any
+model's accuracy under corruption falls to or near chance (10-class chance =
+0.100) are excluded, since predictions there are uninterpretable and inflate
+apparent drift. Excluded cells: `gaussian_noise` at severities 1/3/5 and
+`contrast` at severity 5. Unfiltered numbers (all cells) are shown alongside
+for reference.
+
+| Model | Test accuracy | Norm. deletion AUC ↓ | Norm. insertion AUC ↑ | Norm. ROAD gap ↑ | Mean drift, filtered (1 − Spearman) | Drift/acc-drop ratio, filtered | Mean drift, unfiltered | Drift/acc-drop ratio, unfiltered |
+|---|---|---|---|---|---|---|---|---|
+| `vanilla_scratch` | 80.55% | 0.288 | 0.833 | 0.454 | 0.107 | 0.69 | 0.222 | 0.83 |
+| `no_se_scratch` | 81.29% | 0.281 | 0.825 | 0.504 | 0.097 | 0.71 | 0.219 | 0.85 |
+| `small_kernel_scratch` | 76.34% | 0.269 | 0.878 | 0.540 | 0.141 | 0.99 | 0.262 | 1.07 |
+| `vanilla_finetune` | 95.59% | 0.268 | 0.781 | 0.551 | 0.159 | 1.26 | 0.333 | 1.20 |
 
 Lower is more faithful for deletion AUC; higher is more faithful for
-insertion AUC and ROAD gap. Mean drift and the drift/acc-drop ratio are
-averaged over all six corruptions and three severities (Phase 7); see
-`runs/faithfulness/report.txt` and `runs/robustness/report.txt` for the full
-breakdown, confidence intervals, and significance tests behind these numbers.
+insertion AUC and ROAD gap. Drift and drift/acc-drop ratios are averaged over
+all six corruptions and three severities (minus the excluded cells, for the
+filtered columns). Source: `runs/faithfulness/report.txt` and
+`runs/robustness_fixed_seeded/report.txt` (see Reproducibility notes for why
+this directory, not `runs/robustness/`, is now canonical).
+
+**On the pre-training (`vanilla_finetune`) result — directional, not
+general.** Per-corruption excess drift (`vanilla_finetune` minus the other
+three models' mean, unfiltered) is elevated on `motion_blur` (+0.084),
+`jpeg_compression` (+0.164), and `defocus_blur` (+0.100); **negligible** on
+`brightness` (+0.014); and **reversed** on `contrast` (−0.007 unfiltered,
+−0.145 filtered — `vanilla_finetune` drifts *less* than the other models
+there). `gaussian_noise` shows the largest excess (+0.317) but every one of
+its severities is in the excluded, near-chance-accuracy set, so it is not
+part of the reliable claim. The honest summary is that ImageNet pretraining
+increases explanation drift on some corruption families and decreases it on
+at least one, not that it uniformly destabilizes explanations.
 
 ## Repository structure
 
@@ -222,11 +246,18 @@ python scripts/robustness_eval.py --checkpoints `
     runs/vanilla_scratch/checkpoints/best.pth `
     runs/no_se_scratch/checkpoints/best.pth `
     runs/small_kernel_scratch/checkpoints/best.pth `
-    runs/vanilla_finetune/checkpoints/best.pth --num-images 200
+    runs/vanilla_finetune/checkpoints/best.pth `
+    --num-images 200 --seed 42 --output-dir runs/robustness_fixed_seeded
 
-python scripts/report_robustness.py
-python scripts/concentration_diagnostic.py --checkpoints <same checkpoints as above>
+python scripts/report_robustness.py --robustness-dir runs/robustness_fixed_seeded --min-accuracy 0.2
+python scripts/concentration_diagnostic.py --checkpoints <same checkpoints as above> `
+    --robustness-metrics runs/robustness_fixed_seeded/robustness_metrics.json `
+    --output-dir runs/robustness_fixed_seeded --seed 42
 ```
+
+`--output-dir`/`--robustness-dir` are shown explicitly here (rather than the
+scripts' `runs/robustness` default) to avoid overwriting this repo's
+canonical `runs/robustness_fixed_seeded/` run — see Reproducibility notes.
 
 ## Reliability verification (sanity checks)
 
@@ -297,15 +328,43 @@ flowchart LR
     E --> M["runs/sanity/&lt;experiment&gt;/*.png, *.json"]
     F --> N[runs/compare/*.png]
     I --> O[runs/faithfulness/report.txt]
-    J --> P[runs/robustness/report.txt]
-    K --> Q[runs/robustness/concentration_report.txt]
+    J --> P["runs/&lt;robustness-output-dir&gt;/report.txt"]
+    K --> Q["runs/&lt;robustness-output-dir&gt;/concentration_report.txt"]
 ```
+
+`<robustness-output-dir>` is whatever `--output-dir` you pass to
+`robustness_eval.py`; this README's canonical numbers come from
+`runs/robustness_fixed_seeded/` (see Reproducibility notes above) rather than
+the older `runs/robustness/`.
 
 ## Reproducibility notes
 
 - Every config fixes `seed: 42`; `src.utils.set_seed` seeds Python, NumPy,
   and torch (CPU + CUDA) and disables cuDNN benchmark-mode autotuning for
-  deterministic kernels.
+  deterministic kernels. As of Phase 7.5, every `scripts/*.py` entry point
+  that evaluates a trained model (`robustness_eval.py`, `faithfulness_eval.py`,
+  `sanity_check.py`, `concentration_diagnostic.py`) calls `set_seed(args.seed)`
+  at the top of `main()`, before any data loading or evaluation.
+- **Phase 7.5 fix and its effect on the robustness numbers.** Before this fix,
+  `robustness_eval.py` seeded only the local image-selection RNG, leaving
+  NumPy's *global* RNG state unseeded — and the `imagecorruptions` library
+  draws its noise realizations (e.g. motion-blur angle, Gaussian noise) from
+  that global state. Two runs with an identical `--seed` and identical
+  checkpoints could therefore silently disagree: measured run-to-run
+  variation was ~0.003 on mean drift values of ~0.22 (e.g. `no_se_scratch`:
+  0.220 vs. 0.217; `small_kernel_scratch`: 0.258 vs. 0.261). This is why
+  `runs/robustness_fixed_seeded/` — generated after the fix and verified
+  below — rather than the older `runs/robustness/` or `runs/robustness_fixed/`,
+  is the canonical source for every robustness number in this README.
+  `runs/robustness/` and `runs/robustness_fixed/` are left as-is (not deleted)
+  as a record of the pre-fix runs.
+- **Verification.** `scripts/smoke_test_robustness.py` asserts *exact*
+  (bitwise, not `np.allclose`) equality of every drift field across two
+  in-process reruns of `evaluate_robustness` on synthetic data with the seed
+  reset between them. On real data, two independent full runs
+  (`runs/robustness_fixed_seeded/` and `runs/robustness_reprocheck/`, same
+  checkpoints/`--num-images 200`/`--seed 42`) were diffed programmatically:
+  all 57,600 drift-field values across 14,400 records were bitwise-identical.
 - Checkpoints record their own `val_acc` and training `config`; evaluation
   scripts cross-check a loaded checkpoint's recorded `val_acc` against its
   experiment's `metrics.json` and fail loudly on a mismatch, so a

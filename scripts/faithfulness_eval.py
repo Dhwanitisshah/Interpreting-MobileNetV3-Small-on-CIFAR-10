@@ -34,6 +34,7 @@ from src.utils import (
     resolve_device,
     select_indices,
     set_publication_style,
+    set_seed,
 )
 
 
@@ -181,6 +182,7 @@ def print_summary(aggregates_by_model: dict, significance: dict) -> None:
 
 def main() -> None:
     args = parse_args()
+    set_seed(args.seed)
     set_publication_style()
     device = resolve_device(args.device)
 

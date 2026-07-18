@@ -44,6 +44,7 @@ from src.utils import (
     resolve_device,
     select_indices,
     set_publication_style,
+    set_seed,
 )
 
 
@@ -247,6 +248,7 @@ def print_key_analysis(aggregates_by_model: dict, clean_accuracy: dict, corrupti
 
 def main() -> None:
     args = parse_args()
+    set_seed(args.seed)
     set_publication_style()
     device = resolve_device(args.device)
 

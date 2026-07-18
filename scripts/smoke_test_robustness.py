@@ -17,6 +17,7 @@ import torch
 import torch.nn as nn
 
 from src.robustness import CORRUPTIONS, apply_corruption, evaluate_robustness, explanation_drift
+from src.utils import set_seed
 
 IMG_SIZE = 224
 
@@ -169,6 +170,37 @@ def main() -> bool:
     results.append(("every aggregate entry has the expected keys", all(agg_keys.issubset(v.keys()) for v in aggregates.values())))
     results.append(("every aggregate group has n == num_images", all(v["n"] == len(indices) for v in aggregates.values())))
     results.append(("n_stable + n_flipped == n in every aggregate group", all(v["n_stable"] + v["n_flipped"] == v["n"] for v in aggregates.values())))
+
+    # 5 (Phase 7.5): reproducibility. evaluate_robustness's corruption step
+    # (via imagecorruptions, or the manual np.random fallback) draws from the
+    # GLOBAL numpy RNG, not a locally-seeded generator -- so unless the caller
+    # resets that global state with set_seed() immediately beforehand, two
+    # runs on identical inputs can silently diverge (this was exactly the
+    # Phase 7.5 bug: scripts/robustness_eval.py never called set_seed(), so
+    # reruns with the same --seed produced different drift numbers). Assert
+    # EXACT equality (not np.allclose) on every drift field across two runs
+    # that both reset the seed first, on the same model/dataset/indices.
+    set_seed(123)
+    records_a, _ = evaluate_robustness(model, dataset, indices, device, corruptions, severities, desc="repro-a")
+    set_seed(123)
+    records_b, _ = evaluate_robustness(model, dataset, indices, device, corruptions, severities, desc="repro-b")
+
+    drift_fields = ("spearman", "ssim", "top_k_iou", "centroid_shift")
+    same_length = len(records_a) == len(records_b)
+    exact_match = same_length and all(
+        ra["index"] == rb["index"]
+        and ra["corruption"] == rb["corruption"]
+        and ra["severity"] == rb["severity"]
+        and all(ra[field] == rb[field] for field in drift_fields)
+        for ra, rb in zip(records_a, records_b)
+    )
+    results.append(
+        (
+            "evaluate_robustness is EXACTLY reproducible across two runs "
+            "with set_seed() called immediately before each (drift fields bitwise-equal)",
+            exact_match,
+        )
+    )
 
     print("\n=== ROBUSTNESS SMOKE TEST RESULTS ===")
     all_pass = True

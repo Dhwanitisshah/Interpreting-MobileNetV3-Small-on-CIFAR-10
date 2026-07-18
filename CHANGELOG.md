@@ -4,6 +4,35 @@ All notable changes to this project are documented here. This project follows
 its own phase-based development log rather than semantic versioning, since it
 is an active research codebase rather than a versioned library.
 
+## Phase 7.5 — 2026-07-19
+
+- **Fixed a real evaluation-reproducibility bug**: `scripts/robustness_eval.py`
+  seeded only the local image-selection RNG, leaving NumPy's global RNG
+  unseeded — and `imagecorruptions` draws its noise realizations from that
+  global state, so reruns with an identical `--seed` and checkpoints could
+  silently produce different drift numbers (measured pre-fix variation: ~0.003
+  on mean drift values of ~0.22). Added `set_seed(args.seed)` at the top of
+  `main()` in `robustness_eval.py`, `faithfulness_eval.py`, `sanity_check.py`,
+  and `concentration_diagnostic.py`.
+- Added a reproducibility assertion to `scripts/smoke_test_robustness.py`:
+  two in-process reruns of `evaluate_robustness` with the seed reset between
+  them must produce bitwise-identical drift fields (not `np.allclose`).
+- Verified on real data: two independent full robustness runs
+  (`runs/robustness_fixed_seeded/`, `runs/robustness_reprocheck/`; same
+  checkpoints, `--num-images 200`, `--seed 42`) were diffed programmatically —
+  all 57,600 drift-field values across 14,400 records were bitwise-identical.
+- **Updated README.md's canonical robustness numbers** to source from
+  `runs/robustness_fixed_seeded/` instead of the pre-fix `runs/robustness/`.
+  The qualitative finding survives (drift still scales with architecture
+  beyond accuracy loss) but the reported magnitudes changed, and the wording
+  was corrected to not overstate: the pre-training (`vanilla_finetune`) drift
+  increase is directional (elevated on `motion_blur`/`jpeg_compression`/
+  `defocus_blur`, negligible on `brightness`, reversed on `contrast`), not
+  general; the SE-ablation drift equivalence holds on 3 of 4 metrics at SESOI
+  0.3 Cohen's d, with the 4th (centroid shift) inconclusive rather than
+  equivalent. `runs/robustness/` and `runs/robustness_fixed/` (both gitignored,
+  pre-fix) were left untouched as a record of the earlier runs.
+
 ## [Unreleased] — Repository cleanup
 
 - De-duplicated device resolution, checkpoint loading, synthetic-dataset

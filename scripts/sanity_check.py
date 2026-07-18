@@ -17,6 +17,7 @@ from src.utils import (
     normalize_for_model,
     resolve_device,
     set_publication_style,
+    set_seed,
 )
 
 
@@ -128,6 +129,7 @@ def make_decay_plot(steps: list, output_path: Path) -> None:
 
 def main() -> None:
     args = parse_args()
+    set_seed(args.seed)
     set_publication_style()
     device = resolve_device(args.device)
 

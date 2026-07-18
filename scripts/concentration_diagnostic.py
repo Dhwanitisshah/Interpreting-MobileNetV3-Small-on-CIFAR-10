@@ -48,7 +48,7 @@ from src.data import build_loaders
 from src.explain.gradcam import GradCAM
 from src.metrics import DEFAULT_SESOI_D, tost_paired
 from src.robustness import DRIFT_METRICS, TOP_K_FRACTION, drift_score
-from src.utils import SyntheticTestSet, load_model_from_checkpoint, resolve_device
+from src.utils import SyntheticTestSet, load_model_from_checkpoint, resolve_device, set_seed
 
 CONCENTRATION_MEASURES = ("norm_entropy", "gini", "top20_mass_frac")
 # For all three, direction relative to "more concentrated" differs: entropy is
@@ -158,6 +158,7 @@ def _fmt_pm(vals: np.ndarray) -> str:
 
 def main() -> None:
     args = parse_args()
+    set_seed(args.seed)
     device = resolve_device(args.device)
 
     output_dir = Path(args.output_dir)
