@@ -83,6 +83,11 @@ class SyntheticTestSet(torch.utils.data.Dataset):
 
 
 def load_model(checkpoint_path: Path, device: torch.device) -> tuple:
+    """Rebuild a model from a Phase 2 checkpoint. Loading is strict (any key or
+    shape mismatch raises immediately), and the checkpoint's own recorded val_acc
+    is cross-checked against its experiment's metrics.json so a stale/mismatched
+    checkpoint on disk (e.g. left over from an interrupted training run) fails
+    loudly here instead of silently producing misleading downstream metrics."""
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     config = checkpoint.get("config")
     if config is not None:
@@ -93,11 +98,32 @@ def load_model(checkpoint_path: Path, device: torch.device) -> tuple:
         num_classes = len(CIFAR10_CLASSES)
 
     model = build_mobilenetv3_small(variant=variant, num_classes=num_classes, pretrained=False)
-    model.load_state_dict(checkpoint["model_state"])
+    try:
+        model.load_state_dict(checkpoint["model_state"], strict=True)
+    except RuntimeError as e:
+        raise RuntimeError(
+            f"Failed to strictly load checkpoint '{checkpoint_path}' (variant='{variant}'): {e}"
+        ) from e
     model.eval()
 
     experiment_dir = checkpoint_path.resolve().parent.parent
     display_name = experiment_dir.name
+
+    metrics_path = experiment_dir / "metrics.json"
+    ckpt_val_acc = checkpoint.get("val_acc")
+    if metrics_path.exists() and ckpt_val_acc is not None:
+        with open(metrics_path) as f:
+            summary = json.load(f)["summary"]
+        if abs(ckpt_val_acc - summary["best_val_acc"]) > 0.02:
+            raise RuntimeError(
+                f"Checkpoint provenance mismatch for '{display_name}': {checkpoint_path} stores "
+                f"val_acc={ckpt_val_acc:.4f} (epoch {checkpoint.get('epoch')}) but {metrics_path} "
+                f"records best_val_acc={summary['best_val_acc']:.4f} (best_epoch {summary['best_epoch']}). "
+                f"The checkpoint on disk does not match its own training run's metrics.json — "
+                f"regenerate it, e.g. `python scripts/train.py --config configs/{display_name}.yaml`, "
+                f"before trusting downstream faithfulness numbers."
+            )
+
     return model, display_name
 
 
@@ -141,8 +167,8 @@ def plot_curves(aggregates_by_model: dict, colors: dict, output_path: Path) -> N
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
 
     for ax, key, title, ylabel in (
-        (axes[0], "deletion", "Deletion curve (lower is more faithful)", "P(original class)"),
-        (axes[1], "insertion", "Insertion curve (higher is more faithful)", "P(original class)"),
+        (axes[0], "deletion", "Deletion curve (lower is more faithful)", "P / P0 (confidence retained)"),
+        (axes[1], "insertion", "Insertion curve (higher is more faithful)", "P / P0 (confidence retained)"),
     ):
         for name, agg in aggregates_by_model.items():
             x = np.asarray(agg["fractions"])
@@ -156,7 +182,7 @@ def plot_curves(aggregates_by_model: dict, colors: dict, output_path: Path) -> N
         ax.set_xlabel(f"Fraction of pixels {'removed' if key == 'deletion' else 'revealed'}")
         ax.set_ylabel(ylabel)
         ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
+        ax.set_ylim(bottom=0)
         ax.grid(True, color=GRID_COLOR, linewidth=0.8)
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
@@ -194,9 +220,9 @@ def plot_auc_bars(aggregates_by_model: dict, colors: dict, output_path: Path) ->
         )
 
     ax.set_xticks(x)
-    ax.set_xticklabels(["Deletion AUC\n(lower = more faithful)", "Insertion AUC\n(higher = more faithful)"])
-    ax.set_ylabel("AUC")
-    ax.set_title("Mean deletion / insertion AUC per model (±1 std)", fontsize=10)
+    ax.set_xticklabels(["Deletion AUC (norm)\n(lower = more faithful)", "Insertion AUC (norm)\n(higher = more faithful)"])
+    ax.set_ylabel("Normalized AUC (P / P0)")
+    ax.set_title("Mean confidence-normalized deletion / insertion AUC per model (+/-1 std)", fontsize=10)
     ax.grid(True, axis="y", color=GRID_COLOR, linewidth=0.8)
     for spine in ("top", "right"):
         ax.spines[spine].set_visible(False)
@@ -210,31 +236,38 @@ def plot_auc_bars(aggregates_by_model: dict, colors: dict, output_path: Path) ->
 
 
 def print_summary(aggregates_by_model: dict, significance: dict) -> None:
-    print("\n=== FAITHFULNESS SUMMARY ===")
-    header = f"{'model':<20}{'acc-on-subset':>15}{'deletion AUC':>16}{'insertion AUC':>16}{'ROAD gap':>12}"
+    print("\n=== FAITHFULNESS SUMMARY (confidence-normalized headline metrics, P/P0) ===")
+    header = f"{'model':<20}{'acc-on-subset':>15}{'mean P0':>10}{'del AUC norm':>16}{'ins AUC norm':>16}{'ROAD gap norm':>16}"
     print(header)
     print("-" * len(header))
     for name, agg in aggregates_by_model.items():
         print(
-            f"{name:<20}{agg['accuracy']:>15.1%}"
+            f"{name:<20}{agg['accuracy']:>15.1%}{agg['mean_p0']:>10.3f}"
             f"{agg['deletion_auc_mean']:>11.4f}+/-{agg['deletion_auc_std']:.3f}"
             f"{agg['insertion_auc_mean']:>11.4f}+/-{agg['insertion_auc_std']:.3f}"
-            f"{agg['road_gap_mean']:>7.4f}+/-{agg['road_gap_std']:.3f}"
+            f"{agg['road_gap_mean']:>11.4f}+/-{agg['road_gap_std']:.3f}"
         )
+    print(
+        "\n(raw, non-normalized AUCs are also saved in faithfulness_metrics.json as "
+        "*_auc_raw_mean/std, for reference — they are not directly comparable across "
+        "models with different baseline confidence.)"
+    )
 
-    print("\n=== SIGNIFICANT PAIRWISE DIFFERENCES (p < 0.05, paired t-test or Wilcoxon) ===")
-    any_significant = False
+    print(
+        "\n=== PAIRWISE COMPARISONS, sorted by |Cohen's d| (effect size) descending ==="
+        "\n(with n=500, p-values alone are close to uninformative — nearly every pair is "
+        "\"significant\"; effect size is the quantity to read first. Bonferroni-corrected p "
+        "multiplies raw p by the number of comparisons for that metric.)"
+    )
     for metric_name, rows in significance.items():
+        print(f"\n[{metric_name}]")
         for row in rows:
-            if row["t_p"] < 0.05 or row["wilcoxon_p"] < 0.05:
-                any_significant = True
-                print(
-                    f"[{metric_name}] {row['model_a']} vs {row['model_b']}: "
-                    f"mean_a={row['mean_a']:.4f} mean_b={row['mean_b']:.4f} diff={row['diff']:.4f} "
-                    f"t_p={row['t_p']:.4g} wilcoxon_p={row['wilcoxon_p']:.4g} cohens_d={row['cohens_d']:.3f}"
-                )
-    if not any_significant:
-        print("(none)")
+            print(
+                f"  {row['model_a']} vs {row['model_b']}: d={row['cohens_d']:+.3f} ({row['effect_size']}) "
+                f"diff={row['diff']:+.4f} (mean_a={row['mean_a']:.4f} mean_b={row['mean_b']:.4f}) "
+                f"t_p={row['t_p']:.3g} (bonf={row['t_p_bonferroni']:.3g}) "
+                f"wilcoxon_p={row['wilcoxon_p']:.3g} (bonf={row['wilcoxon_p_bonferroni']:.3g})"
+            )
 
 
 def main() -> None:
