@@ -28,6 +28,7 @@ class DotDict(dict):
 
 
 def load_config(path: Union[str, Path]) -> DotDict:
+    """Load a YAML experiment config (see configs/*.yaml) as a dot-accessible dict."""
     with open(path, "r") as f:
         raw = yaml.safe_load(f)
     return DotDict(raw)

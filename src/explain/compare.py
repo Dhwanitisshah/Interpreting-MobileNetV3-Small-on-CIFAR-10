@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from src.data import denormalize
 from src.explain.gradcam import GradCAM, overlay_cam
+from src.utils import FIGURE_DPI
 
 ModelsAndNames = Sequence[Tuple[nn.Module, str]]
 
@@ -149,5 +150,5 @@ def render_comparison_grid(result: List[Dict], class_names: Sequence[str], out_p
             axes[row][col].set_title(title, fontsize=8, color=color)
 
     fig.tight_layout()
-    fig.savefig(out_path, bbox_inches="tight", dpi=150)
+    fig.savefig(out_path, bbox_inches="tight", dpi=FIGURE_DPI)
     plt.close(fig)

@@ -1,3 +1,11 @@
+"""CIFAR-10 data pipeline: transforms, loaders, and denormalization for overlays.
+
+Images are upsampled from CIFAR-10's native 32x32 to 224x224 (INPUT_SIZE in
+src.utils) so the MobileNetV3-Small variants -- built for ImageNet-scale
+inputs -- receive a resolution consistent with their expected receptive
+field, and so Grad-CAM/robustness code shares one canonical input size.
+"""
+
 from typing import Callable, Optional, Tuple
 
 import torch
@@ -23,6 +31,8 @@ IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
 def build_train_transform() -> transforms.Compose:
+    """Train-time augmentation: crop/flip at native 32x32, then upsample to
+    224x224 and apply ImageNet normalization (see module docstring)."""
     return transforms.Compose(
         [
             transforms.RandomCrop(32, padding=4),
@@ -35,6 +45,7 @@ def build_train_transform() -> transforms.Compose:
 
 
 def build_eval_transform() -> transforms.Compose:
+    """Deterministic eval-time transform: upsample to 224x224 and normalize, no augmentation."""
     return transforms.Compose(
         [
             transforms.Resize(224),
@@ -77,6 +88,12 @@ def build_loaders(
     download: bool = True,
     worker_init_fn: Optional[Callable] = None,
 ) -> Tuple[DataLoader, DataLoader]:
+    """Build CIFAR-10 train/test DataLoaders with the standard train/eval transforms.
+
+    Downloads to `root` on first use if `download=True`. `worker_init_fn` should
+    be `src.utils.seed.seed_worker` when reproducibility across dataloader
+    workers is required (see scripts/train.py).
+    """
     train_set = CIFAR10(
         root=root, train=True, download=download, transform=build_train_transform()
     )

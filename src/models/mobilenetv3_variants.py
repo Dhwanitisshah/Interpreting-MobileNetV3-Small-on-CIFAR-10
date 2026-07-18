@@ -1,3 +1,13 @@
+"""Three MobileNetV3-Small architectural variants used across every experiment.
+
+`vanilla` is torchvision's standard MobileNetV3-Small block configuration.
+`no_se` strips every squeeze-and-excitation block (use_se=False everywhere).
+`small_kernel` replaces every 5x5 depthwise convolution with a 3x3 one. Both
+ablations otherwise keep the exact same block topology, channel widths, and
+activations as `vanilla`, so any downstream difference in faithfulness or
+robustness is attributable to that one architectural change.
+"""
+
 from functools import partial
 from typing import List
 
@@ -28,6 +38,8 @@ _LAST_CHANNEL = 1024
 def _build_inverted_residual_setting(
     variant: str, width_mult: float
 ) -> List[InvertedResidualConfig]:
+    """Apply the variant's ablation (drop SE, or shrink 5x5 kernels to 3x3) to
+    torchvision's standard MobileNetV3-Small block settings."""
     bneck_conf = partial(InvertedResidualConfig, width_mult=width_mult)
 
     setting = []
@@ -49,6 +61,12 @@ def build_mobilenetv3_small(
     width_mult: float = 1.0,
     dropout: float = 0.2,
 ) -> nn.Module:
+    """Build one of the three MobileNetV3-Small variants (see module docstring).
+
+    `pretrained=True` is only valid for `variant="vanilla"`: `no_se` and
+    `small_kernel` change the network topology, so ImageNet weights cannot be
+    mapped onto them and must be trained from scratch.
+    """
     if variant not in VARIANTS:
         raise ValueError(f"Unknown variant '{variant}'. Expected one of {VARIANTS}.")
 
@@ -78,8 +96,10 @@ def build_mobilenetv3_small(
 
 
 def get_gradcam_target_layer(model: nn.Module) -> nn.Module:
+    """The last feature block -- the layer Grad-CAM hooks into (see src.explain.gradcam)."""
     return model.features[-1]
 
 
 def count_parameters(model: nn.Module) -> int:
+    """Total trainable parameter count, for reporting model size (e.g. in a paper table)."""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)

@@ -16,12 +16,17 @@ Output goes to stdout and to runs/faithfulness/report.txt.
 import argparse
 import io
 import json
-import math
+import sys
 from itertools import combinations
 from pathlib import Path
 
 import numpy as np
 from scipy import stats
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.metrics import DEFAULT_SESOI_D, tost_paired
+from src.utils import write_table
 
 ROOT = Path(__file__).resolve().parent.parent
 FAITH_DIR = ROOT / "runs" / "faithfulness"
@@ -34,17 +39,6 @@ NORM_LABELS = {
 }
 
 
-def effect_size_label(d: float) -> str:
-    ad = abs(d)
-    if ad < 0.2:
-        return "negligible"
-    if ad < 0.5:
-        return "small"
-    if ad < 0.8:
-        return "medium"
-    return "large"
-
-
 def load(path: Path) -> dict:
     with open(path) as f:
         return json.load(f)
@@ -54,14 +48,7 @@ def fmt_pm(mean: float, std: float, prec: int = 4) -> str:
     return f"{mean:.{prec}f} (+/-{std:.{prec}f})"
 
 
-def _write_table(out, cols, rows) -> None:
-    header = "  ".join(f"{name:{align}{width}}" for name, width, align in cols)
-    out.write(header + "\n")
-    out.write("-" * len(header) + "\n")
-    for cells in rows:
-        out.write(
-            "  ".join(f"{cell:{align}{width}}" for cell, (_, width, align) in zip(cells, cols)) + "\n"
-        )
+_write_table = write_table
 
 
 def print_summary_tables(out, metrics: dict) -> None:
@@ -137,62 +124,6 @@ def print_significance_tables(out, sig: dict) -> None:
             ])
         _write_table(out, cols, table_rows)
     out.write("\n")
-
-
-def tost_paired(a: np.ndarray, b: np.ndarray, sesoi_d: float):
-    """Two one-sided paired t-tests (TOST) for equivalence, plus the 90% CI.
-
-    Bounds are +/- sesoi_d * sd_of_differences (the smallest effect size of
-    interest, expressed in Cohen's d, converted to the raw scale of the
-    paired differences). Returns a dict with p_TOST, the bound, mean diff,
-    and the 90% CI on the mean paired difference.
-    """
-    diff = a - b
-    n = len(diff)
-    mean_diff = float(diff.mean())
-    sd = float(diff.std(ddof=1))
-    se = sd / math.sqrt(n)
-    df = n - 1
-    bound = sesoi_d * sd
-
-    if se == 0.0:
-        p_lower = 0.0 if mean_diff > -bound else 1.0
-        p_upper = 0.0 if mean_diff < bound else 1.0
-    else:
-        t_lower = (mean_diff - (-bound)) / se
-        p_lower = 1.0 - stats.t.cdf(t_lower, df)
-        t_upper = (mean_diff - bound) / se
-        p_upper = stats.t.cdf(t_upper, df)
-
-    p_tost = max(p_lower, p_upper)
-
-    # 90% CI on the mean paired difference (the interval matching alpha=0.05 TOST).
-    t_crit = stats.t.ppf(0.95, df)
-    ci_low = mean_diff - t_crit * se
-    ci_high = mean_diff + t_crit * se
-
-    # standard two-sided paired t-test, used only to distinguish
-    # INCONCLUSIVE from DIFFERENT when TOST does not establish equivalence.
-    t_stat_2s, p_2s = stats.ttest_rel(a, b)
-
-    if p_tost < 0.05:
-        verdict = "EQUIVALENT (p_TOST < 0.05)"
-    elif p_2s < 0.05 and abs(mean_diff) > bound:
-        verdict = "DIFFERENT (significant and outside bounds)"
-    else:
-        verdict = "INCONCLUSIVE"
-
-    return {
-        "n": n,
-        "mean_diff": mean_diff,
-        "sd_diff": sd,
-        "bound": bound,
-        "p_tost": float(p_tost),
-        "ci90_low": float(ci_low),
-        "ci90_high": float(ci_high),
-        "p_2s": float(p_2s),
-        "verdict": verdict,
-    }
 
 
 def per_model_records(metrics: dict, model: str, metric: str) -> np.ndarray:
@@ -376,8 +307,8 @@ def print_p0_confound_diagnostic(out, metrics: dict) -> None:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--sesoi", type=float, default=0.3,
-        help="Smallest effect size of interest for TOST, in Cohen's d units (default: 0.3).",
+        "--sesoi", type=float, default=DEFAULT_SESOI_D,
+        help=f"Smallest effect size of interest for TOST, in Cohen's d units (default: {DEFAULT_SESOI_D}).",
     )
     args = parser.parse_args()
 

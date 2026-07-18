@@ -1,3 +1,4 @@
+from .equivalence import DEFAULT_SESOI_D, tost_paired
 from .faithfulness import (
     auc,
     compare_models_statistically,
@@ -16,4 +17,6 @@ __all__ = [
     "evaluate_model_faithfulness",
     "compare_models_statistically",
     "effect_size_label",
+    "tost_paired",
+    "DEFAULT_SESOI_D",
 ]

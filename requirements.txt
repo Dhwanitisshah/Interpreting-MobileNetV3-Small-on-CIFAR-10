@@ -7,3 +7,4 @@ matplotlib>=3.8
 scipy>=1.11
 scikit-image>=0.22
 imagecorruptions>=1.1.2
+pillow>=10.0

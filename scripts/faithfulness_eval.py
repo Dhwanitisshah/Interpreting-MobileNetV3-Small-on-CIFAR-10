@@ -12,28 +12,29 @@ Examples (PowerShell):
 
 import argparse
 import json
-import random
 import sys
-from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import matplotlib.pyplot as plt
 import numpy as np
-import torch
 
 from src.data import CIFAR10_CLASSES, build_loaders
 from src.explain import GradCAM
 from src.metrics import compare_models_statistically, evaluate_model_faithfulness
-from src.models import VARIANTS, build_mobilenetv3_small
-
-# Fixed categorical color order (dataviz skill default palette): identity is
-# carried by position in --checkpoints, never reassigned when the model set changes.
-CATEGORICAL_COLORS = ["#2a78d6", "#008300", "#e87ba4", "#eda100", "#1baf7a", "#eb6834", "#4a3aa7", "#e34948"]
-GRID_COLOR = "#e1e0d9"
-AXIS_COLOR = "#c3c2b7"
-MUTED_TEXT = "#898781"
+from src.utils import (
+    AXIS_COLOR,
+    CATEGORICAL_COLORS,
+    FIGURE_DPI,
+    GRID_COLOR,
+    MUTED_TEXT,
+    SyntheticTestSet,
+    load_model_from_checkpoint,
+    resolve_device,
+    select_indices,
+    set_publication_style,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -60,98 +61,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def resolve_device(device_arg: str) -> torch.device:
-    if device_arg == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return torch.device(device_arg)
-
-
-class SyntheticTestSet(torch.utils.data.Dataset):
-    """Un-downloaded fallback: random normalized-looking images with random labels."""
-
-    def __init__(self, n: int = 512, num_classes: int = 10, seed: int = 0):
-        g = torch.Generator().manual_seed(seed)
-        self.images = torch.randn(n, 3, 224, 224, generator=g) * 0.25
-        self.labels = torch.randint(0, num_classes, (n,), generator=g).tolist()
-        self.targets = self.labels
-
-    def __len__(self) -> int:
-        return len(self.labels)
-
-    def __getitem__(self, idx: int):
-        return self.images[idx], self.labels[idx]
-
-
-def load_model(checkpoint_path: Path, device: torch.device) -> tuple:
-    """Rebuild a model from a Phase 2 checkpoint. Loading is strict (any key or
-    shape mismatch raises immediately), and the checkpoint's own recorded val_acc
-    is cross-checked against its experiment's metrics.json so a stale/mismatched
-    checkpoint on disk (e.g. left over from an interrupted training run) fails
-    loudly here instead of silently producing misleading downstream metrics."""
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    config = checkpoint.get("config")
-    if config is not None:
-        variant = config["model"]["variant"]
-        num_classes = config["model"]["num_classes"]
-    else:
-        variant = VARIANTS[0]
-        num_classes = len(CIFAR10_CLASSES)
-
-    model = build_mobilenetv3_small(variant=variant, num_classes=num_classes, pretrained=False)
-    try:
-        model.load_state_dict(checkpoint["model_state"], strict=True)
-    except RuntimeError as e:
-        raise RuntimeError(
-            f"Failed to strictly load checkpoint '{checkpoint_path}' (variant='{variant}'): {e}"
-        ) from e
-    model.eval()
-
-    experiment_dir = checkpoint_path.resolve().parent.parent
-    display_name = experiment_dir.name
-
-    metrics_path = experiment_dir / "metrics.json"
-    ckpt_val_acc = checkpoint.get("val_acc")
-    if metrics_path.exists() and ckpt_val_acc is not None:
-        with open(metrics_path) as f:
-            summary = json.load(f)["summary"]
-        if abs(ckpt_val_acc - summary["best_val_acc"]) > 0.02:
-            raise RuntimeError(
-                f"Checkpoint provenance mismatch for '{display_name}': {checkpoint_path} stores "
-                f"val_acc={ckpt_val_acc:.4f} (epoch {checkpoint.get('epoch')}) but {metrics_path} "
-                f"records best_val_acc={summary['best_val_acc']:.4f} (best_epoch {summary['best_epoch']}). "
-                f"The checkpoint on disk does not match its own training run's metrics.json — "
-                f"regenerate it, e.g. `python scripts/train.py --config configs/{display_name}.yaml`, "
-                f"before trusting downstream faithfulness numbers."
-            )
-
-    return model, display_name
-
-
-def select_indices(dataset, num_images: int, seed: int, stratified: bool) -> list:
-    """One shared, seeded set of indices used for every model (paired design)."""
-    n_total = len(dataset)
-    num_images = min(num_images, n_total)
-    rng = random.Random(seed)
-
-    if not stratified:
-        return sorted(rng.sample(range(n_total), num_images))
-
-    targets = dataset.targets if hasattr(dataset, "targets") else [dataset[i][1] for i in range(n_total)]
-    num_classes = len(CIFAR10_CLASSES)
-    per_class = num_images // num_classes
-    remainder = num_images - per_class * num_classes
-
-    class_to_indices = defaultdict(list)
-    for i, t in enumerate(targets):
-        class_to_indices[int(t)].append(i)
-
-    indices = []
-    for c in range(num_classes):
-        pool = class_to_indices[c]
-        take = min(per_class + (1 if c < remainder else 0), len(pool))
-        indices.extend(rng.sample(pool, take))
-
-    return sorted(indices)
 
 
 def make_cam_fn():
@@ -192,7 +101,7 @@ def plot_curves(aggregates_by_model: dict, colors: dict, output_path: Path) -> N
 
     axes[0].legend(fontsize=8, frameon=False)
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    fig.savefig(output_path, dpi=FIGURE_DPI, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -231,7 +140,7 @@ def plot_auc_bars(aggregates_by_model: dict, colors: dict, output_path: Path) ->
     ax.tick_params(colors=MUTED_TEXT)
     ax.legend(fontsize=8, frameon=False)
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    fig.savefig(output_path, dpi=FIGURE_DPI, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -272,6 +181,7 @@ def print_summary(aggregates_by_model: dict, significance: dict) -> None:
 
 def main() -> None:
     args = parse_args()
+    set_publication_style()
     device = resolve_device(args.device)
 
     output_dir = Path(args.output_dir)
@@ -293,8 +203,7 @@ def main() -> None:
     colors = {}
 
     for i, ckpt in enumerate(args.checkpoints):
-        model, name = load_model(Path(ckpt), device)
-        model.to(device)
+        model, name = load_model_from_checkpoint(Path(ckpt), device, check_provenance=True)
         colors[name] = CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)]
 
         records, aggregate = evaluate_model_faithfulness(

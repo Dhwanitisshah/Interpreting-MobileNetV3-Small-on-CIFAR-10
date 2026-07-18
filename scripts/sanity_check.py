@@ -8,9 +8,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import matplotlib.pyplot as plt
 import torch
 
-from src.data import CIFAR10_CLASSES, IMAGENET_MEAN, IMAGENET_STD, build_loaders, vis_transform
-from src.explain import GradCAM, cascading_randomization, overlay_cam
-from src.models import VARIANTS, build_mobilenetv3_small
+from src.data import CIFAR10_CLASSES, build_loaders, vis_transform
+from src.explain import cascading_randomization, overlay_cam
+from src.utils import (
+    FIGURE_DPI,
+    INPUT_SIZE,
+    load_model_from_checkpoint,
+    normalize_for_model,
+    resolve_device,
+    set_publication_style,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -29,40 +36,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def resolve_device(device_arg: str) -> torch.device:
-    if device_arg == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return torch.device(device_arg)
-
-
-def load_model(checkpoint_path: Path, device: torch.device) -> torch.nn.Module:
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    config = checkpoint.get("config")
-    if config is not None:
-        variant = config["model"]["variant"]
-        num_classes = config["model"]["num_classes"]
-    else:
-        variant = VARIANTS[0]
-        num_classes = len(CIFAR10_CLASSES)
-
-    model = build_mobilenetv3_small(variant=variant, num_classes=num_classes, pretrained=False)
-    model.load_state_dict(checkpoint["model_state"])
-    model.to(device)
-    model.eval()
-    return model
-
-
-def normalize_for_model(images: torch.Tensor) -> torch.Tensor:
-    mean = torch.tensor(IMAGENET_MEAN).view(1, -1, 1, 1)
-    std = torch.tensor(IMAGENET_STD).view(1, -1, 1, 1)
-    return (images - mean) / std
-
-
 def collect_images(args: argparse.Namespace, experiment_dir: Path) -> tuple:
     n = args.num_images
 
     if args.no_download:
-        images = torch.rand(n, 3, 224, 224)
+        images = torch.rand(n, 3, INPUT_SIZE, INPUT_SIZE)
         labels = [None] * n
         return images, labels
 
@@ -123,7 +101,7 @@ def make_grid_figure(
 
     fig.suptitle("Cascading Parameter Randomization (top-down)")
     fig.tight_layout()
-    fig.savefig(output_path, bbox_inches="tight", dpi=150)
+    fig.savefig(output_path, bbox_inches="tight", dpi=FIGURE_DPI)
     plt.close(fig)
 
 
@@ -144,12 +122,13 @@ def make_decay_plot(steps: list, output_path: Path) -> None:
     ax.set_title("Grad-CAM Sanity Check: Cascading Randomization Decay")
     ax.legend()
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150)
+    fig.savefig(output_path, dpi=FIGURE_DPI)
     plt.close(fig)
 
 
 def main() -> None:
     args = parse_args()
+    set_publication_style()
     device = resolve_device(args.device)
 
     checkpoint_path = Path(args.checkpoint)
@@ -159,7 +138,7 @@ def main() -> None:
     output_dir = Path(args.output_dir) if args.output_dir else Path("runs/sanity") / experiment_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    model = load_model(checkpoint_path, device)
+    model, _ = load_model_from_checkpoint(checkpoint_path, device)
     vis_images, labels = collect_images(args, experiment_dir)
     model_input = normalize_for_model(vis_images).to(device)
 

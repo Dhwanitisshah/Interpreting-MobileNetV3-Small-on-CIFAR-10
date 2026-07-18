@@ -38,16 +38,17 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from report_faithfulness import tost_paired  # noqa: E402
+from src.metrics import DEFAULT_SESOI_D, tost_paired
+from src.utils import write_table
 
 ROOT = Path(__file__).resolve().parent.parent
 ROBUSTNESS_DIR = ROOT / "runs" / "robustness"
 
 BASELINE_MODELS = ("vanilla_scratch", "no_se_scratch")
 HIGH_SHIFT_CORRUPTIONS = ("brightness", "contrast")
-SESOI_D = 0.3  # Cohen's d, same convention as Phase 6.2/7.1
+SESOI_D = DEFAULT_SESOI_D  # Cohen's d, same convention as Phase 6.2/7.1
 
 
 def load(path: Path) -> dict:
@@ -67,12 +68,7 @@ def parse_agg_keys(aggregate: dict):
     return corruptions, sorted(severities)
 
 
-def _write_table(out, cols, rows) -> None:
-    header = "  ".join(f"{name:{align}{width}}" for name, width, align in cols)
-    out.write(header + "\n")
-    out.write("-" * len(header) + "\n")
-    for cells in rows:
-        out.write("  ".join(f"{cell:{align}{width}}" for cell, (_, width, align) in zip(cells, cols)) + "\n")
+_write_table = write_table
 
 
 def print_breakdown_tables(out, metrics: dict, corruptions: list, severities: list, field: str, label: str, xform=None) -> None:

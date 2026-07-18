@@ -7,9 +7,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import matplotlib.pyplot as plt
 import torch
 
-from src.data import CIFAR10_CLASSES, build_loaders, denormalize, vis_transform
+from src.data import CIFAR10_CLASSES, build_loaders, vis_transform
 from src.explain import GradCAM, overlay_cam
 from src.models import VARIANTS, build_mobilenetv3_small
+from src.utils import FIGURE_DPI, INPUT_SIZE, normalize_for_model, set_publication_style
 
 
 def parse_args() -> argparse.Namespace:
@@ -50,7 +51,7 @@ def load_model(args: argparse.Namespace) -> torch.nn.Module:
 def collect_images(args: argparse.Namespace) -> tuple:
     n = args.num_images
     if args.no_download:
-        images = torch.rand(n, 3, 224, 224)
+        images = torch.rand(n, 3, INPUT_SIZE, INPUT_SIZE)
         labels = [None] * n
         return images, labels
 
@@ -68,16 +69,9 @@ def collect_images(args: argparse.Namespace) -> tuple:
     return images, labels
 
 
-def normalize_for_model(images: torch.Tensor) -> torch.Tensor:
-    from src.data import IMAGENET_MEAN, IMAGENET_STD
-
-    mean = torch.tensor(IMAGENET_MEAN).view(1, -1, 1, 1)
-    std = torch.tensor(IMAGENET_STD).view(1, -1, 1, 1)
-    return (images - mean) / std
-
-
 def main() -> None:
     args = parse_args()
+    set_publication_style()
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -111,7 +105,7 @@ def main() -> None:
         fig.suptitle(f"true={true_label} pred={pred_label}")
 
         out_path = output_dir / f"gradcam_{i:03d}.png"
-        fig.savefig(out_path, bbox_inches="tight")
+        fig.savefig(out_path, bbox_inches="tight", dpi=FIGURE_DPI)
         plt.close(fig)
 
     print(f"Saved {vis_images.shape[0]} Grad-CAM panels to {output_dir.resolve()}")

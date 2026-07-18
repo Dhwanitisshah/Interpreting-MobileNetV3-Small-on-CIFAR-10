@@ -20,11 +20,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import torch
-
 from src.data import CIFAR10_CLASSES, build_loaders
 from src.explain import build_comparison, render_comparison_grid, select_shared_indices
-from src.models import VARIANTS, build_mobilenetv3_small
+from src.utils import SyntheticTestSet, load_model_from_checkpoint, resolve_device, set_publication_style
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,49 +49,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def resolve_device(device_arg: str) -> torch.device:
-    if device_arg == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return torch.device(device_arg)
-
-
-class SyntheticTestSet(torch.utils.data.Dataset):
-    """Un-downloaded fallback: random normalized-looking images with random labels."""
-
-    def __init__(self, n: int = 64, num_classes: int = 10, seed: int = 0):
-        g = torch.Generator().manual_seed(seed)
-        self.images = torch.randn(n, 3, 224, 224, generator=g) * 0.25
-        self.labels = torch.randint(0, num_classes, (n,), generator=g).tolist()
-
-    def __len__(self) -> int:
-        return len(self.labels)
-
-    def __getitem__(self, idx: int):
-        return self.images[idx], self.labels[idx]
-
-
-def load_model(checkpoint_path: Path, device: torch.device) -> tuple:
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    config = checkpoint.get("config")
-    if config is not None:
-        variant = config["model"]["variant"]
-        num_classes = config["model"]["num_classes"]
-    else:
-        variant = VARIANTS[0]
-        num_classes = len(CIFAR10_CLASSES)
-
-    model = build_mobilenetv3_small(variant=variant, num_classes=num_classes, pretrained=False)
-    model.load_state_dict(checkpoint["model_state"])
-    model.to(device)
-    model.eval()
-
-    experiment_dir = checkpoint_path.resolve().parent.parent
-    display_name = experiment_dir.name
-    return model, display_name
-
-
 def main() -> None:
     args = parse_args()
+    set_publication_style()
     device = resolve_device(args.device)
 
     output_dir = Path(args.output_dir)
@@ -101,7 +59,7 @@ def main() -> None:
 
     models_and_names = []
     for ckpt in args.checkpoints:
-        model, name = load_model(Path(ckpt), device)
+        model, name = load_model_from_checkpoint(Path(ckpt), device)
         models_and_names.append((model, name))
 
     if args.no_download:

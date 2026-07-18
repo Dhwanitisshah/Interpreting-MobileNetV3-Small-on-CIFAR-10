@@ -1,6 +1,27 @@
+# Data and experiment outputs (regenerate via scripts/, see weights/README.md)
 /data/
-__pycache__/
-*.pth
+/runs/
 checkpoints/
-runs/
+*.pth
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editors / IDEs
+.vscode/
+.idea/
 .claude/
+
+# OS
+.DS_Store
+Thumbs.db

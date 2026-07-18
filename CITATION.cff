@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "Interpreting MobileNetV3-Small on CIFAR-10: Architectural Effects on Saliency Explanation Reliability"
+authors:
+  - family-names: Shah
+    given-names: Dhwanit
+repository-code: "https://github.com/Dhwanitisshah/Interpreting-MobileNetV3-Small-on-CIFAR-10"
+license: MIT
+version: 1.0.0
+date-released: "2026-07-18"
+keywords:
+  - computer-vision
+  - deep-learning
+  - mobilenetv3
+  - explainable-ai
+  - gradcam
+  - pytorch
+  - cifar10
+  - interpretability

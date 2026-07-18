@@ -244,3 +244,23 @@ def _aggregate(records: List[Dict]) -> Dict[str, Dict]:
         }
 
     return aggregates
+
+
+DRIFT_METRICS: Tuple[str, ...] = ("spearman", "ssim", "top_k_iou", "centroid_shift")
+
+# Higher spearman/ssim/top_k_iou means LESS drift (more stable); higher
+# centroid_shift means MORE drift. Flip sign so "mean drift" is uniformly
+# "bigger number = more explanation instability" across all four metrics.
+HIGHER_IS_MORE_DRIFT: Dict[str, bool] = {
+    "spearman": False,
+    "ssim": False,
+    "top_k_iou": False,
+    "centroid_shift": True,
+}
+
+
+def drift_score(row: Dict, metric: str) -> float:
+    """A single number where BIGGER == MORE drift, for every metric in DRIFT_METRICS."""
+    return (1.0 - row[metric]) if not HIGHER_IS_MORE_DRIFT[metric] else row[metric]
+
+    return aggregates

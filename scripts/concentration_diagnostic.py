@@ -37,7 +37,6 @@ from collections import defaultdict
 from itertools import combinations
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
@@ -47,15 +46,9 @@ from tqdm import tqdm
 
 from src.data import build_loaders
 from src.explain.gradcam import GradCAM
-
-from report_faithfulness import tost_paired
-from robustness_eval import (
-    DRIFT_METRICS,
-    SyntheticTestSet,
-    drift_score,
-    load_model,
-    resolve_device,
-)
+from src.metrics import DEFAULT_SESOI_D, tost_paired
+from src.robustness import DRIFT_METRICS, TOP_K_FRACTION, drift_score
+from src.utils import SyntheticTestSet, load_model_from_checkpoint, resolve_device
 
 CONCENTRATION_MEASURES = ("norm_entropy", "gini", "top20_mass_frac")
 # For all three, direction relative to "more concentrated" differs: entropy is
@@ -76,7 +69,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--data-root", default="data")
     parser.add_argument("--no-download", action="store_true", help="Use a synthetic random test set instead of CIFAR-10.")
-    parser.add_argument("--sesoi", type=float, default=0.3, help="Smallest effect size of interest for TOST, Cohen's d.")
+    parser.add_argument(
+        "--sesoi", type=float, default=DEFAULT_SESOI_D, help="Smallest effect size of interest for TOST, Cohen's d."
+    )
     return parser.parse_args()
 
 
@@ -107,7 +102,7 @@ def top20_mass_fraction(cam: np.ndarray) -> float:
     total = flat.sum()
     if total <= 1e-12:
         return 0.0
-    k = max(1, int(round(0.20 * flat.size)))
+    k = max(1, int(round(TOP_K_FRACTION * flat.size)))
     top_sum = np.sort(flat)[-k:].sum()
     return float(top_sum / total)
 
@@ -191,10 +186,9 @@ def main() -> None:
     concentration_by_model = {}
     concentration_records_by_model = {}
     for ckpt in args.checkpoints:
-        model, name = load_model(Path(ckpt), device)
+        model, name = load_model_from_checkpoint(Path(ckpt), device, check_provenance=True)
         if name not in records_by_model:
             raise ValueError(f"Checkpoint '{ckpt}' resolves to model name '{name}' not found in {robustness_path}.")
-        model.to(device)
 
         cams = compute_cams(model, base_dataset, shared_indices, device, desc=f"concentration[{name}]")
         per_measure = {measure: [] for measure in CONCENTRATION_MEASURES}

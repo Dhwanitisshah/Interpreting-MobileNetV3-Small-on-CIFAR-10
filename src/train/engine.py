@@ -1,3 +1,7 @@
+"""Training and evaluation harness: SGD + cosine annealing, checkpointing, and
+per-class/confusion-matrix evaluation artifacts consumed by every downstream
+explanation script (Grad-CAM, faithfulness, robustness)."""
+
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -89,6 +93,13 @@ def train_model(
     limit_train_batches: Optional[int] = None,
     limit_val_batches: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
+    """Train `model` for `cfg.train.epochs` epochs with SGD + cosine annealing.
+
+    Writes `<output_dir>/checkpoints/{last,best}.pth` after every epoch (best
+    by val_acc) and `<output_dir>/metrics.json` (full per-epoch history plus
+    a summary) at the end. `limit_train_batches`/`limit_val_batches` truncate
+    each epoch early, for smoke testing.
+    """
     model.to(device)
 
     optimizer = torch.optim.SGD(
@@ -161,6 +172,10 @@ def evaluate(
     device: torch.device,
     num_classes: int = 10,
 ) -> Dict[str, Any]:
+    """Evaluate `model` on `loader`, returning overall/per-class accuracy, a
+    full confusion matrix, and one record per example (index, true/pred
+    label, confidence, correct) for downstream explanation scripts to select
+    correctly/incorrectly classified images by index."""
     model.to(device)
     model.eval()
 
@@ -213,6 +228,9 @@ def evaluate(
 
 
 def save_eval_artifacts(eval_result: Dict[str, Any], output_dir: str) -> None:
+    """Write `evaluate()`'s result to `<output_dir>/eval/`: predictions.json,
+    confusion_matrix.json, and correct/incorrect_indices.json (the index
+    lists Grad-CAM/sanity-check scripts use to pick visualization images)."""
     eval_dir = Path(output_dir) / "eval"
     eval_dir.mkdir(parents=True, exist_ok=True)
 

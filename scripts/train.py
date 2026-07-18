@@ -4,12 +4,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import torch
-
 from src.data import build_loaders
 from src.models import build_mobilenetv3_small
 from src.train import evaluate, save_eval_artifacts, train_model
-from src.utils import load_config, set_seed
+from src.utils import load_config, resolve_device, set_seed
 from src.utils.seed import seed_worker
 
 
@@ -33,12 +31,6 @@ def parse_args() -> argparse.Namespace:
         "--limit-val-batches", type=int, default=None, help="Limit val batches per epoch."
     )
     return parser.parse_args()
-
-
-def resolve_device(device_arg: str) -> torch.device:
-    if device_arg == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return torch.device(device_arg)
 
 
 def main() -> None:
