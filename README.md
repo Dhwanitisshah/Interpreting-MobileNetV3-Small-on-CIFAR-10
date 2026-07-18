@@ -26,9 +26,25 @@ affect the reliability of saliency-based explanations.
   (top-down) model-parameter randomization test with Spearman and SSIM
   similarity metrics, quantifying whether Grad-CAM explanations actually
   track learned weights rather than acting as edge detectors.
-- **Phase 5+ (planned)** — Cross-variant ablation comparison (vanilla vs.
-  no-SE vs. small-kernel explanation quality), robustness checks, a demo
-  app, and the write-up for the research paper.
+- **Phase 5 (done, `5cfc648`)** — Cross-variant Grad-CAM comparison across
+  `vanilla`, `no_se`, and `small_kernel`.
+- **Phase 6 (done, `59b2d4a`–`5db5ee2`)** — Quantitative faithfulness
+  metrics (deletion/insertion AUC, ROAD gap) with confidence-normalization,
+  pairwise significance testing, TOST equivalence testing, and a p0 confound
+  diagnostic ruling out normalization artifacts as the source of cross-model
+  ranking differences.
+- **Phase 7 (done, `f1842bc`–`d046e8b`)** — Explanation robustness under
+  distribution shift: drift of Grad-CAM explanations across six
+  ImageNet-C-style corruptions and three severities, with a CAM-sharpness
+  confound check, a per-corruption drift breakdown, a fixed-target-class
+  bug fix (drift was comparing CAMs for different predicted classes after a
+  flip), and an accuracy-floor sensitivity analysis excluding
+  chance-accuracy corruption/severity cells from the equivalence tests.
+  Headline finding: explanation drift scales with architecture, not just
+  with accuracy loss, and the effect is concentrated in additive/sensor
+  noise (gaussian_noise) rather than the low-level statistic-shift
+  corruptions (brightness/contrast) expected going in.
+- **Planned next** — demo app and the research paper write-up.
 
 ## Results so far
 
@@ -37,6 +53,12 @@ affect the reliability of saliency-based explanations.
   similarity to the original CAM decays from ~0.8 toward ~0 as the model is
   progressively randomized top-down, confirming the explanations are
   weight-dependent rather than degenerate edge maps.
+- Under distribution shift, explanation drift scales with architecture, not
+  just with accuracy loss: `vanilla_finetune` and `small_kernel_scratch` show
+  drift well beyond what their accuracy drop alone predicts (drift/acc-drop
+  ratio 1.4 and 1.3, vs. 0.6 for `vanilla_scratch`/`no_se_scratch`), an effect
+  that is not explained by CAM-sharpness confounds and is concentrated in
+  additive/sensor noise (gaussian_noise) rather than brightness/contrast.
 
 ## Project layout
 
@@ -52,6 +74,16 @@ src/explain/sanity.py                 Cascading parameter-randomization sanity c
 scripts/train.py                      Train a variant from a config.
 scripts/gradcam_demo.py               Save Grad-CAM overlay panels for a checkpoint.
 scripts/sanity_check.py               Run the Grad-CAM sanity check on a checkpoint.
+src/explain/compare.py                Cross-variant Grad-CAM comparison.
+scripts/compare_variants.py           Run the cross-variant comparison.
+src/metrics/faithfulness.py           Deletion/insertion AUC, ROAD gap, significance/TOST testing.
+scripts/faithfulness_eval.py          Run faithfulness metrics on a checkpoint.
+scripts/report_faithfulness.py        Reporting layer over faithfulness runs (summaries, TOST, p0 diagnostic).
+src/robustness/corruptions.py         ImageNet-C-style corruption functions.
+src/robustness/drift.py               Grad-CAM drift measurement under corruption.
+scripts/robustness_eval.py            Run the robustness/drift evaluation across checkpoints.
+scripts/report_robustness.py          Per-corruption drift breakdown, accuracy-floor sensitivity analysis.
+scripts/concentration_diagnostic.py   CAM concentration diagnostic + drift equivalence testing.
 scripts/smoke_test*.py                Fast, no-download checks for each module.
 ```
 
