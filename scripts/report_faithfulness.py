@@ -6,6 +6,9 @@ retraining, no re-evaluation. Prints:
   2. All pairwise significance comparisons, grouped by metric.
   3. TOST equivalence testing on the paired per-image normalized metrics.
   4. A plain-English verdict for the key vanilla_scratch vs no_se_scratch pair.
+  5. A p0-confound diagnostic: within-model correlation between p0 and each
+     normalized metric, to check whether cross-model ranking differences are
+     a normalization artifact rather than a real property of the models.
 
 Output goes to stdout and to runs/faithfulness/report.txt.
 """
@@ -301,6 +304,75 @@ def print_key_verdict(out, tost_results: dict, sesoi_d: float) -> None:
     )
 
 
+def print_p0_confound_diagnostic(out, metrics: dict) -> None:
+    out.write("=" * 100 + "\n")
+    out.write("5. P0 CONFOUND DIAGNOSTIC (within-model correlation between p0 and normalized metrics)\n")
+    out.write("=" * 100 + "\n")
+
+    models = list(metrics.keys())
+    cols = [
+        ("model", 22, "<"),
+        ("metric", 18, "<"),
+        ("spearman(p0, metric)", 22, ">"),
+        ("pearson(p0, metric)", 21, ">"),
+        ("n", 6, ">"),
+    ]
+
+    table_rows = []
+    insertion_r = {}
+    for m in models:
+        records = metrics[m]["records"]
+        p0 = np.asarray([r["p0"] for r in records], dtype=np.float64)
+        for metric in NORM_METRICS:
+            vals = np.asarray([r[metric] for r in records], dtype=np.float64)
+            rho, _ = stats.spearmanr(p0, vals)
+            r, _ = stats.pearsonr(p0, vals)
+            if metric == "insertion_auc":
+                insertion_r[m] = r
+            table_rows.append([
+                m, NORM_LABELS[metric], f"{rho:.4f}", f"{r:.4f}", str(len(vals)),
+            ])
+    _write_table(out, cols, table_rows)
+    out.write("\n")
+
+    strong_negative = {m: r <= -0.5 for m, r in insertion_r.items()}
+    n_strong_negative = sum(strong_negative.values())
+    detail = "; ".join(f"{m}: r={r:+.3f}" for m, r in insertion_r.items())
+
+    if n_strong_negative == len(insertion_r):
+        interpretation = (
+            "Within-model correlation between p0 and normalized insertion AUC is consistently strong and "
+            "negative across ALL models (Pearson r <= -0.5 in every case). This is the signature of a "
+            "normalization artifact: dividing by p0 systematically inflates the normalized metric for "
+            "low-confidence images and deflates it for high-confidence ones within every model, so any "
+            "cross-model gap in mean p0 (see Section 1) will show up as a gap in normalized insertion AUC "
+            "even if the underlying explanations are equally faithful. The cross-model ranking on normalized "
+            "insertion AUC should therefore be treated with caution and is more likely a residual artifact of "
+            "the p0 normalization than a real property of the architectures."
+        )
+    elif n_strong_negative == 0:
+        interpretation = (
+            "Within-model correlation between p0 and normalized insertion AUC is weak in every model "
+            "(Pearson r > -0.5 in every case). This argues against a normalization artifact: if the p0 "
+            "division were driving the metric, we would expect a strong within-model relationship between "
+            "confidence and the normalized score. Its absence suggests the cross-model differences reported "
+            "in Sections 1-3 are more likely to reflect a real property of the architectures rather than a "
+            "residual normalization effect."
+        )
+    else:
+        interpretation = (
+            f"Within-model correlation between p0 and normalized insertion AUC is mixed across models "
+            f"({n_strong_negative}/{len(insertion_r)} show a strong negative correlation, r <= -0.5). This is "
+            "an ambiguous signal: some part of the cross-model ranking may be a p0-normalization artifact, "
+            "but it is not uniform enough to attribute the whole effect to normalization. The cross-model "
+            "differences should be interpreted cautiously and, where possible, corroborated with a metric "
+            "less sensitive to p0 (e.g. raw AUCs alongside a p0-matched subsample)."
+        )
+
+    out.write(f"Per-model insertion-AUC correlations: {detail}\n\n")
+    out.write(interpretation + "\n\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -317,6 +389,7 @@ def main():
     print_significance_tables(buf, sig)
     tost_results = print_tost_tables(buf, metrics, args.sesoi)
     print_key_verdict(buf, tost_results, args.sesoi)
+    print_p0_confound_diagnostic(buf, metrics)
 
     text = buf.getvalue()
     print(text, end="")
