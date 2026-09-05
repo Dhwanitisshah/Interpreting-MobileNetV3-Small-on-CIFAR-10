@@ -82,6 +82,22 @@ def load_eval_indices(output_root: Path, seed: int, stage: str, metrics_file: st
 def main() -> bool:
     results = []
 
+    # --- --configs accepts a bare name, a bare filename, and a full path ---
+    bare = run_campaign.resolve_config_path("vanilla_scratch")
+    with_ext = run_campaign.resolve_config_path("vanilla_scratch.yaml")
+    full_path = run_campaign.resolve_config_path("configs/vanilla_scratch.yaml")
+    results.append(("resolve_config_path: bare name and full path agree", bare == full_path))
+    results.append(("resolve_config_path: bare filename and full path agree", with_ext == full_path))
+
+    cells_bare = run_campaign.build_cells(["vanilla_scratch"], [0], "runs")
+    cells_path = run_campaign.build_cells(["configs/vanilla_scratch.yaml"], [0], "runs")
+    results.append(
+        ("build_cells: bare name and full path resolve to the same cell",
+         cells_bare[0].config_path == cells_path[0].config_path
+         and cells_bare[0].experiment == cells_path[0].experiment
+         and cells_bare[0].cell_dir == cells_path[0].cell_dir)
+    )
+
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
         config_path = tmp_path / "tiny_config.yaml"

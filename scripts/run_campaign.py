@@ -40,10 +40,10 @@ from src.utils import load_config
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 DEFAULT_CONFIGS = [
-    "configs/vanilla_scratch.yaml",
-    "configs/no_se_scratch.yaml",
-    "configs/small_kernel_scratch.yaml",
-    "configs/vanilla_finetune.yaml",
+    "vanilla_scratch",
+    "no_se_scratch",
+    "small_kernel_scratch",
+    "vanilla_finetune",
 ]
 STAGE_ORDER = ["train", "faithfulness", "robustness", "sanity"]
 
@@ -155,10 +155,35 @@ def build_cmd(stage: str, cell: Cell, args: argparse.Namespace) -> List[str]:
     return cmd
 
 
+def resolve_config_path(value: str) -> Path:
+    """Resolve a --configs entry to a real YAML file.
+
+    Accepts, in order: the value as-is (a path, relative to the current
+    working directory, or absolute -- e.g. "configs/vanilla_scratch.yaml" or
+    "/abs/path/foo.yaml"); a bare name under configs/ ("vanilla_scratch.yaml");
+    or a bare experiment name with the extension implied ("vanilla_scratch").
+    The configs/ fallbacks are anchored to the repo root so bare names resolve
+    the same way regardless of the driver's working directory.
+    """
+    candidates = [
+        Path(value),
+        REPO_ROOT / "configs" / value,
+        REPO_ROOT / "configs" / f"{value}.yaml",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            # Resolve to an absolute path: stage subprocesses run with
+            # cwd=REPO_ROOT (see run_stage), which would silently mis-resolve
+            # a relative "as-is" match taken from the driver's own cwd.
+            return candidate.resolve()
+    tried = ", ".join(str(c) for c in candidates)
+    raise FileNotFoundError(f"Could not resolve --configs value '{value}'; tried: {tried}")
+
+
 def build_cells(configs: List[str], seeds: List[int], output_root: str) -> List[Cell]:
     cells = []
     for config in configs:
-        config_path = Path(config)
+        config_path = resolve_config_path(config)
         cfg = load_config(config_path)
         for seed in seeds:
             cell_dir = Path(output_root) / cfg.experiment / f"seed{seed}"
@@ -251,7 +276,12 @@ def run_stage(stage: str, cell: Cell, args: argparse.Namespace) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Phase 8.1 multi-seed training + evaluation campaign driver.")
-    parser.add_argument("--configs", nargs="+", default=DEFAULT_CONFIGS)
+    parser.add_argument(
+        "--configs", nargs="+", default=DEFAULT_CONFIGS,
+        help="Configs to run: bare experiment names (vanilla_scratch), bare filenames "
+        "(vanilla_scratch.yaml), or paths (configs/vanilla_scratch.yaml) -- see "
+        "resolve_config_path. Default: all four project configs, by bare name.",
+    )
     parser.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2, 3, 4])
     parser.add_argument("--num-images-faithfulness", type=int, default=500)
     parser.add_argument("--num-images-robustness", type=int, default=200)
