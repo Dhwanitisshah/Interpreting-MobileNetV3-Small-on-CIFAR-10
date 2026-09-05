@@ -1,3 +1,3 @@
-from .engine import evaluate, save_eval_artifacts, train_model
+from .engine import evaluate, run_final_test_evaluation, save_eval_artifacts, train_model
 
-__all__ = ["train_model", "evaluate", "save_eval_artifacts"]
+__all__ = ["train_model", "evaluate", "run_final_test_evaluation", "save_eval_artifacts"]

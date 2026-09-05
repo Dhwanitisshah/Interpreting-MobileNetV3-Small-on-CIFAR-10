@@ -192,7 +192,7 @@ def main() -> None:
     if args.no_download:
         base_dataset = SyntheticTestSet(n=max(512, args.num_images), num_classes=len(CIFAR10_CLASSES), seed=args.seed)
     else:
-        _, test_loader = build_loaders(root=args.data_root, num_workers=0, download=True)
+        _, _, test_loader = build_loaders(root=args.data_root, num_workers=0, download=True)
         base_dataset = test_loader.dataset
 
     indices = select_indices(base_dataset, args.num_images, args.seed, args.stratified)

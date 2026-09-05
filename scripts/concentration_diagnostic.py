@@ -175,7 +175,7 @@ def main() -> None:
     if args.no_download:
         base_dataset = SyntheticTestSet(n=max(512, len(shared_indices)), seed=args.seed)
     else:
-        _, test_loader = build_loaders(root=args.data_root, num_workers=0, download=True)
+        _, _, test_loader = build_loaders(root=args.data_root, num_workers=0, download=True)
         base_dataset = test_loader.dataset
 
     if len(args.checkpoints) != len(robustness_metrics):

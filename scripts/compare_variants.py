@@ -65,7 +65,7 @@ def main() -> None:
     if args.no_download:
         test_set = SyntheticTestSet(n=max(64, args.num_images * 4), num_classes=len(CIFAR10_CLASSES), seed=args.seed)
     else:
-        _, test_loader = build_loaders(root=args.data_root, num_workers=0, download=True)
+        _, _, test_loader = build_loaders(root=args.data_root, num_workers=0, download=True)
         test_set = test_loader.dataset
 
     indices = select_shared_indices(

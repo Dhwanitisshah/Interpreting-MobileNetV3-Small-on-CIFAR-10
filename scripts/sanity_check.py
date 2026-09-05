@@ -45,7 +45,7 @@ def collect_images(args: argparse.Namespace, experiment_dir: Path) -> tuple:
         labels = [None] * n
         return images, labels
 
-    _, test_loader = build_loaders(
+    _, _, test_loader = build_loaders(
         root=args.data_root,
         test_batch_size=n,
         num_workers=0,

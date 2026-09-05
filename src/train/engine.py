@@ -227,6 +227,41 @@ def evaluate(
     }
 
 
+def run_final_test_evaluation(
+    model: nn.Module,
+    test_loader: DataLoader,
+    device: torch.device,
+    output_dir: str,
+    num_classes: int = 10,
+) -> Dict[str, Any]:
+    """Reload `<output_dir>/checkpoints/best.pth` (the val-selected checkpoint)
+    into `model`, evaluate it once on the held-out `test_loader`, and record
+    the result as `test_acc` in `<output_dir>/metrics.json`'s summary
+    alongside `best_val_acc`.
+
+    Called once, after training, so the reported test accuracy always
+    reflects the checkpoint actually selected on validation -- the test set
+    plays no role in selecting which weights get reported.
+    """
+    output_path = Path(output_dir)
+    checkpoint = torch.load(
+        output_path / "checkpoints" / "best.pth", map_location=device, weights_only=False
+    )
+    model.load_state_dict(checkpoint["model_state"])
+    model.to(device)
+
+    eval_result = evaluate(model, test_loader, device, num_classes=num_classes)
+
+    metrics_path = output_path / "metrics.json"
+    with open(metrics_path) as f:
+        metrics_out = json.load(f)
+    metrics_out["summary"]["test_acc"] = eval_result["overall_acc"]
+    with open(metrics_path, "w") as f:
+        json.dump(metrics_out, f, indent=2)
+
+    return eval_result
+
+
 def save_eval_artifacts(eval_result: Dict[str, Any], output_dir: str) -> None:
     """Write `evaluate()`'s result to `<output_dir>/eval/`: predictions.json,
     confusion_matrix.json, and correct/incorrect_indices.json (the index

@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.data import build_loaders
 from src.models import build_mobilenetv3_small
-from src.train import evaluate, save_eval_artifacts, train_model
+from src.train import run_final_test_evaluation, save_eval_artifacts, train_model
 from src.utils import load_config, resolve_device, set_seed
 from src.utils.seed import seed_worker
 
@@ -19,6 +19,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-root", default="runs", help="Root directory for run outputs."
+    )
+    parser.add_argument(
+        "--seed", type=int, default=None, help="Override cfg.seed (output goes to runs/<experiment>/seed<N>/)."
     )
     parser.add_argument(
         "--num-workers", type=int, default=None, help="Override cfg.data.num_workers."
@@ -36,7 +39,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     cfg = load_config(args.config)
-    set_seed(cfg.seed)
+
+    resolved_seed = args.seed if args.seed is not None else cfg.seed
+    cfg.seed = resolved_seed
+    set_seed(resolved_seed)
 
     if args.num_workers is not None:
         cfg.data.num_workers = args.num_workers
@@ -44,10 +50,12 @@ def main() -> None:
         cfg.train.epochs = args.epochs
 
     device = resolve_device(args.device)
-    output_dir = Path(args.output_root) / cfg.experiment
+    output_dir = Path(args.output_root) / cfg.experiment / f"seed{resolved_seed}"
     output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Seed: {resolved_seed}")
+    print(f"Output dir: {output_dir}")
 
-    train_loader, test_loader = build_loaders(
+    train_loader, val_loader, test_loader = build_loaders(
         root=cfg.data.root,
         train_batch_size=cfg.data.train_batch_size,
         test_batch_size=cfg.data.test_batch_size,
@@ -65,7 +73,7 @@ def main() -> None:
     history = train_model(
         model,
         train_loader,
-        test_loader,
+        val_loader,
         cfg,
         device,
         str(output_dir),
@@ -74,7 +82,9 @@ def main() -> None:
     )
     best_val_acc = max((h["val_acc"] for h in history), default=0.0)
 
-    eval_result = evaluate(model, test_loader, device, num_classes=cfg.model.num_classes)
+    eval_result = run_final_test_evaluation(
+        model, test_loader, device, str(output_dir), num_classes=cfg.model.num_classes
+    )
     save_eval_artifacts(eval_result, str(output_dir))
 
     print("\n=== SUMMARY ===")
