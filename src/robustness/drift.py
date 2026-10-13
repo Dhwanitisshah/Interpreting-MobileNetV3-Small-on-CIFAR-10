@@ -25,7 +25,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 from src.data import IMAGENET_MEAN, IMAGENET_STD, denormalize
-from src.explain.gradcam import GradCAM
+from src.explain.methods import DEFAULT_METHOD, build_explainer
 from src.explain.sanity import spearman_similarity, ssim_similarity
 
 from .corruptions import apply_corruption
@@ -108,25 +108,31 @@ def _to_normalized_tensor(image_uint8_hwc: np.ndarray, device: torch.device) -> 
 
 
 def _cam_for_class(
-    model: torch.nn.Module, image: torch.Tensor, device: torch.device, target_class: int = None
+    model: torch.nn.Module,
+    image: torch.Tensor,
+    device: torch.device,
+    target_class: int = None,
+    method: str = DEFAULT_METHOD,
+    method_seed: int = 0,
 ) -> Tuple[np.ndarray, int, float, float]:
-    """Compute a Grad-CAM plus the model's OWN prediction/confidence on `image`.
+    """Compute a CAM (Grad-CAM by default; see `method`) plus the model's OWN
+    prediction/confidence on `image`.
 
     If `target_class` is None, the CAM explains the model's own prediction
     (the clean pass). If `target_class` is given, the CAM explains that FIXED
     class regardless of what the model currently predicts on this image (the
     corrupted pass) -- so drift measures how the explanation for the SAME
     class moved, rather than conflating explanation movement with the model
-    answering a different question. `GradCAM.__call__` always returns the
-    model's actual argmax prediction (`preds`) independent of `target_class`,
-    which is what it is used for here.
+    answering a different question. Every explainer's `__call__` always returns
+    the model's actual argmax prediction (`preds`) independent of
+    `target_class`, which is what it is used for here.
 
     Returns (cam, actual_pred, actual_pred_confidence, explained_class_confidence)
     where explained_class_confidence is the probability of whichever class the
     CAM explains (== actual_pred_confidence when target_class is None).
     """
-    with GradCAM(model) as gradcam:
-        cams, preds = gradcam(image.unsqueeze(0).to(device), target_class=target_class)
+    with build_explainer(method, model, seed=method_seed) as explainer:
+        cams, preds = explainer(image.unsqueeze(0).to(device), target_class=target_class)
     pred = int(preds[0])
     explained_class = int(target_class) if target_class is not None else pred
     with torch.no_grad():
@@ -144,6 +150,8 @@ def evaluate_robustness(
     corruptions: Sequence[str],
     severities: Sequence[int],
     desc: str = "robustness",
+    method: str = DEFAULT_METHOD,
+    method_seed: int = 0,
 ) -> Tuple[List[Dict], Dict]:
     """For every image: compute the clean CAM/prediction once, then for every
     (corruption, severity) corrupt the un-normalized image and recompute the
@@ -152,8 +160,9 @@ def evaluate_robustness(
     answering the same question ("where does the evidence for class C live?")
     so that `explanation_drift` measures the explanation actually moving,
     rather than conflating that with the model's prediction changing (which is
-    tracked separately via `corrupt_pred` / `flipped`). Returns
-    (per_image_records, aggregates_by_corruption_severity)."""
+    tracked separately via `corrupt_pred` / `flipped`). `method` selects the
+    attribution method (see `src.explain.methods`; `method_seed` seeds the
+    random baseline). Returns (per_image_records, aggregates_by_corruption_severity)."""
     model.eval()
     records: List[Dict] = []
 
@@ -165,7 +174,9 @@ def evaluate_robustness(
         image = image.to(device)
         label = int(label)
 
-        cam_clean, pred_clean, conf_clean, _ = _cam_for_class(model, image, device, target_class=None)
+        cam_clean, pred_clean, conf_clean, _ = _cam_for_class(
+            model, image, device, target_class=None, method=method, method_seed=method_seed
+        )
         clean_correct = pred_clean == label
         image_uint8 = _to_uint8_hwc(image)
 
@@ -175,7 +186,7 @@ def evaluate_robustness(
                 corrupt_tensor = _to_normalized_tensor(corrupt_uint8, device)
 
                 cam_corrupt, pred_corrupt, conf_corrupt, conf_corrupt_of_clean_class = _cam_for_class(
-                    model, corrupt_tensor, device, target_class=pred_clean
+                    model, corrupt_tensor, device, target_class=pred_clean, method=method, method_seed=method_seed
                 )
                 drift = explanation_drift(cam_clean, cam_corrupt)
                 corrupt_correct = pred_corrupt == label

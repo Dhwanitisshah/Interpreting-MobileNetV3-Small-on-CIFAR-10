@@ -6,7 +6,7 @@ import torch.nn as nn
 from scipy.stats import spearmanr
 from skimage.metrics import structural_similarity
 
-from .gradcam import GradCAM
+from .methods import DEFAULT_METHOD, build_explainer
 
 
 def spearman_similarity(a: np.ndarray, b: np.ndarray) -> float:
@@ -71,6 +71,7 @@ def cascading_randomization(
     images: torch.Tensor,
     target_layer: Optional[nn.Module] = None,
     seed: int = 42,
+    method: str = DEFAULT_METHOD,
 ) -> Tuple[List[Dict], torch.Tensor]:
     """Adebayo et al. (2018) cascading (top-down) parameter-randomization sanity check.
 
@@ -78,11 +79,15 @@ def cascading_randomization(
     on that same device and normalized for the model's input. Returns (steps, reference_cams)
     where `steps` is an ordered list of {step_name, mean_spearman, mean_ssim, cams} records,
     one per cascade step, and `reference_cams` are the CAMs from the intact model.
+
+    `method` selects the attribution method (see `src.explain.methods`); `seed`
+    drives both the parameter re-initialization and, for `method="random"`, the
+    baseline's noise (which is model-independent, so it never decays -- see `RandomCAM`).
     """
     model.eval()
 
-    with GradCAM(model, target_layer=target_layer) as gradcam:
-        reference_cams, _ = gradcam(images)
+    with build_explainer(method, model, target_layer=target_layer, seed=seed) as explainer:
+        reference_cams, _ = explainer(images)
 
     torch.manual_seed(seed)
 
@@ -92,8 +97,8 @@ def cascading_randomization(
     for step_name, module in order:
         randomize_module_(module)
 
-        with GradCAM(model, target_layer=target_layer) as gradcam:
-            cams, _ = gradcam(images)
+        with build_explainer(method, model, target_layer=target_layer, seed=seed) as explainer:
+            cams, _ = explainer(images)
 
         spearmans = []
         ssims = []

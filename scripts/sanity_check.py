@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import torch
 
 from src.data import CIFAR10_CLASSES, build_loaders, vis_transform
-from src.explain import cascading_randomization, overlay_cam
+from src.explain import DEFAULT_METHOD, METHOD_LABELS, METHODS, cascading_randomization, overlay_cam
 from src.utils import (
     FIGURE_DPI,
     INPUT_SIZE,
@@ -27,7 +27,17 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--checkpoint", required=True, help="Path to a Phase 2 .pth checkpoint.")
     parser.add_argument("--num-images", type=int, default=6)
-    parser.add_argument("--output-dir", default=None, help="Default: runs/sanity/<experiment>.")
+    parser.add_argument(
+        "--method",
+        choices=METHODS,
+        default=DEFAULT_METHOD,
+        help="Attribution method: gradcam (default), gradcampp (Grad-CAM++), or random (uniform-noise null baseline).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Default: runs/sanity/<experiment> for --method gradcam, runs/sanity/<experiment>_<method> otherwise.",
+    )
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--data-root", default="data")
     parser.add_argument(
@@ -106,7 +116,7 @@ def make_grid_figure(
     plt.close(fig)
 
 
-def make_decay_plot(steps: list, output_path: Path) -> None:
+def make_decay_plot(steps: list, output_path: Path, method: str = DEFAULT_METHOD) -> None:
     x = list(range(len(steps)))
     x_labels = [s["step_name"] for s in steps]
     spearman_vals = [s["mean_spearman"] for s in steps]
@@ -120,7 +130,7 @@ def make_decay_plot(steps: list, output_path: Path) -> None:
     ax.set_xticklabels(x_labels, rotation=60, ha="right", fontsize=7)
     ax.set_xlabel("Cascade step (top-down)")
     ax.set_ylabel("Similarity to original CAM")
-    ax.set_title("Grad-CAM Sanity Check: Cascading Randomization Decay")
+    ax.set_title(f"{METHOD_LABELS[method]} Sanity Check: Cascading Randomization Decay")
     ax.legend()
     fig.tight_layout()
     fig.savefig(output_path, dpi=FIGURE_DPI)
@@ -137,20 +147,26 @@ def main() -> None:
     experiment_dir = checkpoint_path.resolve().parent.parent
     experiment_name = experiment_dir.name
 
-    output_dir = Path(args.output_dir) if args.output_dir else Path("runs/sanity") / experiment_name
+    if args.output_dir:
+        output_dir = Path(args.output_dir)
+    elif args.method == DEFAULT_METHOD:
+        output_dir = Path("runs/sanity") / experiment_name
+    else:
+        output_dir = Path("runs/sanity") / f"{experiment_name}_{args.method}"
     output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Attribution method: {METHOD_LABELS[args.method]} ({args.method}); output dir: {output_dir}")
 
     model, _ = load_model_from_checkpoint(checkpoint_path, device)
     vis_images, labels = collect_images(args, experiment_dir)
     model_input = normalize_for_model(vis_images).to(device)
 
-    steps, reference_cams = cascading_randomization(model, model_input, seed=args.seed)
+    steps, reference_cams = cascading_randomization(model, model_input, seed=args.seed, method=args.method)
 
     grid_path = output_dir / "sanity_grid.png"
     make_grid_figure(vis_images, reference_cams, steps, labels, grid_path)
 
     decay_path = output_dir / "decay_plot.png"
-    make_decay_plot(steps, decay_path)
+    make_decay_plot(steps, decay_path, method=args.method)
 
     metrics = [
         {"step_name": s["step_name"], "mean_spearman": s["mean_spearman"], "mean_ssim": s["mean_ssim"]}

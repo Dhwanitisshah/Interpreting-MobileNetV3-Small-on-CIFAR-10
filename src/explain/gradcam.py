@@ -31,6 +31,12 @@ class GradCAM:
     def _grad_hook(self, grad: torch.Tensor) -> None:
         self._gradient = grad
 
+    def _channel_weights(self, activation: torch.Tensor, gradient: torch.Tensor) -> torch.Tensor:
+        """Per-channel importance weights, shape (N, C, 1, 1). Grad-CAM: the
+        spatial mean of the gradient. Subclasses (e.g. Grad-CAM++) override only
+        this -- hooks, target-class handling, normalization and upsampling are shared."""
+        return gradient.mean(dim=(2, 3), keepdim=True)
+
     def __call__(
         self,
         input_tensor: torch.Tensor,
@@ -56,7 +62,7 @@ class GradCAM:
 
             activation = self._activation
             gradient = self._gradient
-            weights = gradient.mean(dim=(2, 3), keepdim=True)
+            weights = self._channel_weights(activation, gradient)
             cam = F.relu((weights * activation).sum(dim=1))
 
             n = cam.shape[0]

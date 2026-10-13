@@ -4,6 +4,28 @@ All notable changes to this project are documented here. This project follows
 its own phase-based development log rather than semantic versioning, since it
 is an active research codebase rather than a versioned library.
 
+## Phase 8.2 — random-CAM baseline + second attribution method
+
+- Added `GradCAMPlusPlus` (from scratch, `src/explain/gradcampp.py`): same
+  hooks, target layer, normalization and output as `GradCAM`; only the channel
+  weights differ (`GradCAM._channel_weights` is now an overridable method).
+- Added `RandomCAM` (`src/explain/random_cam.py`): uniform-noise CAM in [0, 1],
+  seeded per image from (base seed, image bytes) so it is reproducible and
+  identical across models/cells. It is the null floor a real method must beat;
+  being model-independent it correctly shows no decay in the sanity check.
+- `--method {gradcam,gradcampp,random}` (default `gradcam`) on
+  `faithfulness_eval.py`, `robustness_eval.py`, and `sanity_check.py`, selecting
+  the explainer everywhere a CAM is computed (`src/explain/methods.py`). Default
+  behavior is unchanged (verified bitwise against `runs/robustness_fixed_seeded/`).
+  A non-default method's default output dir gets a `_<method>` suffix so it
+  cannot overwrite canonical Grad-CAM results; output JSONs record `method`.
+- `scripts/run_campaign.py`: new `--methods` (default `gradcam gradcampp
+  random`); training runs once per (config, seed) and each eval stage once per
+  method, into `runs/<exp>/seed<N>/<method>/<stage>/`. `EVAL_SEED` stays fixed
+  across all cells and methods. The default plan is 20 train + 180 eval jobs.
+- New `scripts/smoke_test_methods.py`; `smoke_test_campaign.py` updated for the
+  method dimension. `concentration_diagnostic.py` is still Grad-CAM-only.
+
 ## Phase 7.5 — 2026-07-19
 
 - **Fixed a real evaluation-reproducibility bug**: `scripts/robustness_eval.py`

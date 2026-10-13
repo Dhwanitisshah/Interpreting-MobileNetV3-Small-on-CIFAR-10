@@ -31,6 +31,7 @@ import numpy as np
 from scipy import stats
 
 from src.data import CIFAR10_CLASSES, build_loaders
+from src.explain import DEFAULT_METHOD, METHOD_LABELS, METHODS
 from src.metrics import effect_size_label
 from src.robustness import CORRUPTIONS, DRIFT_METRICS, drift_score, evaluate_robustness
 from src.utils import (
@@ -57,7 +58,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--corruptions", nargs="+", default=list(CORRUPTIONS), choices=list(CORRUPTIONS))
     parser.add_argument("--severities", nargs="+", type=int, default=[1, 3, 5])
-    parser.add_argument("--output-dir", default="runs/robustness")
+    parser.add_argument(
+        "--method",
+        choices=METHODS,
+        default=DEFAULT_METHOD,
+        help="Attribution method: gradcam (default), gradcampp (Grad-CAM++), or random (uniform-noise null baseline).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Default: runs/robustness for --method gradcam, runs/robustness_<method> otherwise "
+        "(so a non-default method never overwrites the canonical Grad-CAM results).",
+    )
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--data-root", default="data")
@@ -252,8 +264,11 @@ def main() -> None:
     set_publication_style()
     device = resolve_device(args.device)
 
+    if args.output_dir is None:
+        args.output_dir = "runs/robustness" if args.method == DEFAULT_METHOD else f"runs/robustness_{args.method}"
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Attribution method: {METHOD_LABELS[args.method]} ({args.method}); output dir: {output_dir}")
 
     if args.no_download:
         base_dataset = SyntheticTestSet(n=max(512, args.num_images), num_classes=len(CIFAR10_CLASSES), seed=args.seed)
@@ -281,7 +296,15 @@ def main() -> None:
         colors[name] = CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)]
 
         records, aggregate = evaluate_robustness(
-            model, base_dataset, indices, device, args.corruptions, args.severities, desc=f"robustness[{name}]"
+            model,
+            base_dataset,
+            indices,
+            device,
+            args.corruptions,
+            args.severities,
+            desc=f"robustness[{name}]",
+            method=args.method,
+            method_seed=args.seed,
         )
         records_by_model[name] = records
         aggregates_by_model[name] = aggregate
@@ -292,7 +315,12 @@ def main() -> None:
         clean_accuracy[name] = float(np.mean(list(clean_correct.values())))
 
     metrics_out = {
-        name: {"clean_accuracy": clean_accuracy[name], "aggregate": aggregates_by_model[name], "records": records_by_model[name]}
+        name: {
+            "method": args.method,
+            "clean_accuracy": clean_accuracy[name],
+            "aggregate": aggregates_by_model[name],
+            "records": records_by_model[name],
+        }
         for name in aggregates_by_model
     }
     metrics_path = output_dir / "robustness_metrics.json"
