@@ -294,6 +294,20 @@ def main() -> bool:
         wired = wired and default_ok and explicit_ok and rejects
         results.append((f"{module_name}.py: --method defaults to gradcam, accepts {list(METHODS)}, rejects others", default_ok and explicit_ok and rejects))
 
+    # ---------- 7: concentration_diagnostic refuses non-Grad-CAM robustness output ----------
+    import concentration_diagnostic
+
+    def guard_raises(metrics: dict) -> bool:
+        try:
+            concentration_diagnostic.check_grad_cam_only(metrics)
+            return False
+        except ValueError:
+            return True
+
+    results.append(("concentration_diagnostic guard: rejects gradcampp/random, accepts gradcam and legacy (no 'method')",
+                    guard_raises({"m": {"method": "gradcampp"}}) and guard_raises({"m": {"method": "random"}})
+                    and not guard_raises({"m": {"method": "gradcam"}}) and not guard_raises({"m": {}})))
+
     print("\n=== ATTRIBUTION-METHODS SMOKE TEST RESULTS ===")
     all_pass = True
     for name, ok in results:

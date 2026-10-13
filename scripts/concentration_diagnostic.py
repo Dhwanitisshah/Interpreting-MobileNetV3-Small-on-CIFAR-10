@@ -115,6 +115,21 @@ def compute_concentration(cam: np.ndarray) -> dict:
     }
 
 
+def check_grad_cam_only(robustness_metrics: dict, source: str = "robustness metrics") -> None:
+    """This diagnostic recomputes clean CAMs with Grad-CAM itself, so it is only
+    valid on robustness output produced with `--method gradcam`. Output from
+    before the Phase 8.2 `method` field existed is Grad-CAM by construction."""
+    for name, entry in robustness_metrics.items():
+        method = entry.get("method", "gradcam")
+        if method != "gradcam":
+            raise ValueError(
+                f"{source}: model '{name}' was evaluated with method '{method}', but "
+                f"concentration_diagnostic.py is Grad-CAM-only (it computes its own Grad-CAM clean CAMs, "
+                f"which would silently mix methods). Point --robustness-metrics at output from "
+                f"`robustness_eval.py --method gradcam`."
+            )
+
+
 def load_shared_indices(robustness_metrics: dict) -> list:
     names = list(robustness_metrics.keys())
     ref_indices = sorted({r["index"] for r in robustness_metrics[names[0]]["records"]})
@@ -167,6 +182,7 @@ def main() -> None:
     robustness_path = Path(args.robustness_metrics)
     with open(robustness_path) as f:
         robustness_metrics = json.load(f)
+    check_grad_cam_only(robustness_metrics, source=str(robustness_path))
     records_by_model = {name: robustness_metrics[name]["records"] for name in robustness_metrics}
 
     shared_indices = load_shared_indices(robustness_metrics)
